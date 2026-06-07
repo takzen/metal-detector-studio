@@ -1,6 +1,4 @@
-# ==========================================
-# System & IDEs 
-# ==========================================
+# OS & IDEs
 .DS_Store
 Thumbs.db
 .vscode/
@@ -10,9 +8,7 @@ Thumbs.db
 *.njsproj
 *.sln
 
-# ==========================================
-# Python / FastAPI (Backend)
-# ==========================================
+# Python (Backend)
 .venv/
 venv/
 env/
@@ -23,8 +19,6 @@ __pycache__/
 *.pyd
 .pytest_cache/
 .mypy_cache/
-
-
 build/
 develop-eggs/
 dist/
@@ -39,27 +33,19 @@ var/
 wheels/
 *.egg-info/
 
-# ==========================================
 # Node / Next.js (Frontend)
-# ==========================================
 node_modules/
 .pnp
 .pnp.js
-
-# cache Next.js
 .next/
 out/
 dist/
-
-# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# ==========================================
-# ENV
-# ==========================================
+# Environments & Secrets
 .env
 .env.local
 .env.development.local
