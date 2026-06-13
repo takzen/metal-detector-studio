@@ -4,13 +4,13 @@ import { useEffect, useRef } from "react";
 import { colorFor } from "@/lib/palette";
 import type { FeatureFrame, Harmonic } from "@/lib/types";
 
-// Mirrors the device SERVICE2 screen: a single DELTA vector vs the tracked ground
-// (ground at centre), auto-scaled to a slowly-decaying peak with a floor so it never
-// zooms into noise when idle. One vector per harmonic — no point cloud.
-const BASELINE_ALPHA = 0.02; // ground-tracking speed (per new frame)
-const PEAK_DECAY = 1 / 64; // slow peak decay per new frame (like SERVICE2 peak>>6)
-const FLOOR_FRAC = 0.02; // peak floor as a fraction of the ground magnitude
-const ABS_FLOOR = 1e-6;
+// Plots the device's delta vector (OX/OY = ground-tracked I/Q) directly: centre = the
+// device's zero, so zeroing on the detector recenters here automatically. One vector per
+// harmonic. Auto-scale grows fairly fast to fit a target and shrinks SLOWLY, so the view
+// doesn't jump/zoom into noise between passes. The "zero" button applies a manual offset.
+const PEAK_RISE = 0.08; // scale grows toward larger signals
+const PEAK_FALL = 0.01; // ...and shrinks slowly (stable, no jitter)
+const ABS_FLOOR = 1; // never divide by ~0
 
 export function Hodograph({
   trailRef,
@@ -23,14 +23,14 @@ export function Hodograph({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const peakRef = useRef(1);
-  const baselineRef = useRef<Map<string, { i: number; q: number }>>(new Map());
-  const dispRef = useRef<Map<string, { i: number; q: number }>>(new Map());
+  const zeroRef = useRef<Map<string, { i: number; q: number }>>(new Map()); // manual offset
+  const dispRef = useRef<Map<string, { i: number; q: number }>>(new Map()); // eased tip
   const lastSeqRef = useRef(-1);
-  const zeroPendingRef = useRef(true);
+  const zeroPendingRef = useRef(false);
 
-  // request a baseline snap (instant zero) whenever the parent bumps zeroSignal
+  // manual "zero": snap the offset to the current sample whenever zeroSignal bumps
   useEffect(() => {
-    zeroPendingRef.current = true;
+    if (zeroSignal > 0) zeroPendingRef.current = true;
   }, [zeroSignal]);
 
   useEffect(() => {
@@ -67,48 +67,41 @@ export function Hodograph({
       const cy = h / 2;
       const half = Math.min(w, h) / 2;
       const radius = half * 0.92;
-      const base = baselineRef.current;
+      const zero = zeroRef.current;
 
       const latest = trail[trail.length - 1];
 
-      // --- instant zero: snap the baseline to the current sample ---
+      // --- manual zero: snap the offset to the current sample ---
       if (zeroPendingRef.current && latest) {
         zeroPendingRef.current = false;
         for (const harm of harmonics) {
           const s = latest.harmonics[harm.id];
           if (!s) continue;
-          base.set(harm.id, { i: s.i, q: s.q });
-          dispRef.current.set(harm.id, { i: 0, q: 0 });
+          zero.set(harm.id, { i: s.i, q: s.q });
         }
-        peakRef.current = ABS_FLOOR;
       }
 
-      // --- once per new frame: track ground + update decaying peak ---
+      const ox = (id: string) => zero.get(id)?.i ?? 0;
+      const oy = (id: string) => zero.get(id)?.q ?? 0;
+
+      // --- per new frame: ease the auto-scale (fast up, slow down) ---
       if (latest && latest.seq !== lastSeqRef.current) {
         lastSeqRef.current = latest.seq;
         let frameMag = 0;
-        let groundMag = 0;
         for (const harm of harmonics) {
           const s = latest.harmonics[harm.id];
           if (!s) continue;
-          const b = base.get(harm.id) ?? { i: s.i, q: s.q };
-          b.i += BASELINE_ALPHA * (s.i - b.i);
-          b.q += BASELINE_ALPHA * (s.q - b.q);
-          base.set(harm.id, b);
-          frameMag = Math.max(frameMag, Math.hypot(s.i - b.i, s.q - b.q));
-          groundMag = Math.max(groundMag, Math.hypot(b.i, b.q));
+          frameMag = Math.max(frameMag, Math.hypot(s.i - ox(harm.id), s.q - oy(harm.id)));
         }
-        let peak = peakRef.current * (1 - PEAK_DECAY);
-        if (frameMag > peak) peak = frameMag;
-        const floor = Math.max(ABS_FLOOR, FLOOR_FRAC * groundMag);
-        if (peak < floor) peak = floor;
-        peakRef.current = peak;
+        const a = frameMag > peakRef.current ? PEAK_RISE : PEAK_FALL;
+        peakRef.current += a * (frameMag - peakRef.current);
+        if (peakRef.current < ABS_FLOOR) peakRef.current = ABS_FLOOR;
       }
 
       const peak = peakRef.current;
       const scale = radius / peak;
-      const bx = (id: string) => base.get(id)?.i ?? 0;
-      const by = (id: string) => base.get(id)?.q ?? 0;
+      const bx = ox;
+      const by = oy;
 
       drawGrid(ctx, cx, cy, radius, peak);
 
