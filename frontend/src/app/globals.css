@@ -20,6 +20,12 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  /* Always reserve the scrollbar gutter so switching between tall/short tabs
+     doesn't shift the centered layout sideways. */
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
