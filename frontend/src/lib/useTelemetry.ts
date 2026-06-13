@@ -58,6 +58,12 @@ export function useTelemetry(): Telemetry {
   const iqIRef = useRef<number[]>([]);
   const iqQRef = useRef<number[]>([]);
   const iqFsRef = useRef<number>(1000);
+  // EMA-smoothed values for the (slow, readable) numeric readouts
+  const featSmoothRef = useRef<{
+    i: Record<string, number>;
+    q: Record<string, number>;
+    extras: Record<string, number>;
+  } | null>(null);
 
   // arrival timestamps for rate measurement (sliding window; data can arrive bursty)
   const featTimes = useRef<number[]>([]);
@@ -101,15 +107,30 @@ export function useTelemetry(): Telemetry {
             trailRef.current = [];
             iqIRef.current = [];
             iqQRef.current = [];
+            featSmoothRef.current = null;
             setHasIq(false);
             break;
           }
           case "feature": {
-            featureRef.current = msg;
+            const f = msg as FeatureFrame;
+            featureRef.current = f;
             const trail = trailRef.current;
-            trail.push(msg);
+            trail.push(f);
             if (trail.length > TRAIL_MAX) trail.splice(0, trail.length - TRAIL_MAX);
             featTimes.current.push(performance.now());
+            // EMA smoothing for the readable numeric readouts
+            const A = 0.15;
+            const sm = featSmoothRef.current ?? { i: {}, q: {}, extras: {} };
+            for (const id in f.harmonics) {
+              const hs = f.harmonics[id];
+              sm.i[id] = sm.i[id] === undefined ? hs.i : sm.i[id] + A * (hs.i - sm.i[id]);
+              sm.q[id] = sm.q[id] === undefined ? hs.q : sm.q[id] + A * (hs.q - sm.q[id]);
+            }
+            for (const k in f.extras) {
+              const v = f.extras[k];
+              sm.extras[k] = sm.extras[k] === undefined ? v : sm.extras[k] + A * (v - sm.extras[k]);
+            }
+            featSmoothRef.current = sm;
             break;
           }
           case "raw": {
@@ -162,13 +183,30 @@ export function useTelemetry(): Telemetry {
   // --- rAF: flush throttled state + compute rates over a sliding window ---
   useEffect(() => {
     const RATE_WINDOW_MS = 2000; // average over 2 s so bursty arrival reads smoothly
+    const DISP_MS = 250; // refresh numeric readouts ~4x/s so they're readable
     let af = 0;
     let lastRate = performance.now();
+    let lastDisp = performance.now();
     const tick = () => {
-      setFeature(featureRef.current);
-      setRaw(rawRef.current);
-
       const now = performance.now();
+      if (now - lastDisp >= DISP_MS) {
+        lastDisp = now;
+        const fr = featureRef.current;
+        const sm = featSmoothRef.current;
+        if (fr && sm) {
+          const harmonics: FeatureFrame["harmonics"] = {};
+          for (const id in fr.harmonics) {
+            const i = sm.i[id] ?? fr.harmonics[id].i;
+            const q = sm.q[id] ?? fr.harmonics[id].q;
+            harmonics[id] = { i, q, mag: Math.hypot(i, q), phase: Math.atan2(q, i) };
+          }
+          setFeature({ ...fr, harmonics, extras: { ...sm.extras } });
+        } else {
+          setFeature(fr);
+        }
+        setRaw(rawRef.current);
+      }
+
       if (now - lastRate >= 300) {
         lastRate = now;
         const cut = now - RATE_WINDOW_MS;

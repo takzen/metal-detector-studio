@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ControlPanel } from "@/components/ControlPanel";
 import { Hodograph } from "@/components/Hodograph";
 import { IQScope } from "@/components/IQScope";
@@ -77,6 +77,19 @@ export default function Home() {
   const [tab, setTab] = useState<TabId>("hodograph");
   const [zeroNonce, setZeroNonce] = useState(0);
 
+  // Keyboard zero: Enter or Z (mirrors the detector's ENTER=zero), unless typing in a control.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(el.tagName)) return;
+      if (e.key === "Enter" || e.key.toLowerCase() === "z") {
+        setZeroNonce((n) => n + 1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const rawStats = raw
     ? (() => {
         let min = Infinity;
@@ -145,10 +158,10 @@ export default function Home() {
                 <div className="flex flex-wrap items-center gap-3">
                   <button
                     onClick={() => setZeroNonce((n) => n + 1)}
-                    title="zero now: snap the centre to the current vector"
+                    title="zero now: snap the centre to the current vector (keyboard: Enter or Z)"
                     className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:text-foreground"
                   >
-                    zero
+                    zero (Enter)
                   </button>
                   {profile?.harmonics.map((h, i) => (
                     <span key={h.id} className="inline-flex items-center gap-1.5 text-xs">
