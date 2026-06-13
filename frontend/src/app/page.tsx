@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ControlPanel } from "@/components/ControlPanel";
 import { Hodograph } from "@/components/Hodograph";
 import { Scope } from "@/components/Scope";
+import { SourceControls } from "@/components/SourceControls";
 import { Spectrum } from "@/components/Spectrum";
 import { colorFor } from "@/lib/palette";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
@@ -75,19 +76,24 @@ export default function Home() {
   return (
     <main className="flex-1 w-full max-w-7xl mx-auto p-6">
       {/* Header (stable layout) */}
-      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold">Metal Detector Studio</h1>
-          <p className="truncate text-sm text-muted">
-            {profile ? profile.title : "waiting for device profile…"}
-          </p>
+      <header className="border-b border-border pb-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold">Metal Detector Studio</h1>
+            <p className="truncate text-sm text-muted">
+              {profile ? profile.title : "waiting for device profile…"}
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <StatusDot status={t.status} />
+            <Metric label="schema" value={t.schemaVersion ?? "—"} w="w-16" />
+            <Metric label="feature" value={`${fmt(stats.featureHz)} Hz`} />
+            <Metric label="raw" value={`${fmt(stats.rawHz)} Hz`} />
+            <Metric label="seq" value={feature ? String(feature.seq) : "—"} w="w-24" />
+          </div>
         </div>
-        <div className="flex items-center gap-4">
-          <StatusDot status={t.status} />
-          <Metric label="schema" value={t.schemaVersion ?? "—"} w="w-16" />
-          <Metric label="feature" value={`${fmt(stats.featureHz)} Hz`} />
-          <Metric label="raw" value={`${fmt(stats.rawHz)} Hz`} />
-          <Metric label="seq" value={feature ? String(feature.seq) : "—"} w="w-24" />
+        <div className="mt-3">
+          <SourceControls />
         </div>
       </header>
 
@@ -166,32 +172,32 @@ export default function Home() {
 
               <Card>
                 <h2 className="mb-3 text-sm font-medium text-muted">Phase diffs</h2>
-                <div className="flex flex-wrap gap-6">
-                  {profile?.phase_diffs.length ? (
-                    profile.phase_diffs.map((pd) => (
+                {profile?.phase_diffs.length ? (
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+                    {profile.phase_diffs.map((pd) => (
                       <Stat
                         key={pd.name}
                         label={pd.name}
                         value={feature ? `${fmt((feature.phase_diffs[pd.name] ?? 0) * DEG)}°` : "—"}
                       />
-                    ))
-                  ) : (
-                    <span className="text-sm text-muted">none (single-frequency profile)</span>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-sm text-muted">none (single-frequency profile)</span>
+                )}
               </Card>
 
               <Card>
                 <h2 className="mb-3 text-sm font-medium text-muted">Extras</h2>
-                <div className="flex flex-wrap gap-6">
-                  {feature && Object.keys(feature.extras).length ? (
-                    Object.entries(feature.extras).map(([k, v]) => (
+                {feature && Object.keys(feature.extras).length ? (
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
+                    {Object.entries(feature.extras).map(([k, v]) => (
                       <Stat key={k} label={k} value={fmt(v, 2)} />
-                    ))
-                  ) : (
-                    <span className="text-sm text-muted">none</span>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-sm text-muted">none</span>
+                )}
               </Card>
             </div>
           </div>
