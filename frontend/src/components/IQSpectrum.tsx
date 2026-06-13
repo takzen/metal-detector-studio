@@ -96,6 +96,11 @@ export function IQSpectrum({
     let af = 0;
     const tick = () => {
       af = requestAnimationFrame(tick);
+      // keep canvas matched to its container every frame (fixes blank-until-click)
+      const r = host.getBoundingClientRect();
+      const W = Math.max(1, Math.round(r.width));
+      const H = Math.max(1, Math.round(r.height));
+      if (W !== u.width || H !== u.height) u.setSize({ width: W, height: H });
       const ib = iRef.current;
       const qb = qRef.current;
       const fs = fsRef.current || 1000;
