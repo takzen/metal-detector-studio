@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ControlPanel } from "@/components/ControlPanel";
 import { Hodograph } from "@/components/Hodograph";
 import { IQScope } from "@/components/IQScope";
 import { IQSpectrum } from "@/components/IQSpectrum";
+import { Recorder, type RecChannel } from "@/components/Recorder";
 import { Scope } from "@/components/Scope";
 import { SourceControls } from "@/components/SourceControls";
 import { Spectrum } from "@/components/Spectrum";
@@ -14,11 +15,12 @@ import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 const DEG = 180 / Math.PI;
 const fmt = (n: number, d = 1) => n.toFixed(d);
 
-type TabId = "hodograph" | "scope" | "fft" | "control";
+type TabId = "hodograph" | "scope" | "fft" | "dsp" | "control";
 const TABS: { id: TabId; label: string }[] = [
   { id: "hodograph", label: "XY hodograph" },
   { id: "scope", label: "Oscilloscope" },
   { id: "fft", label: "Live FFT" },
+  { id: "dsp", label: "DSP / SAT" },
   { id: "control", label: "Control" },
 ];
 
@@ -81,6 +83,28 @@ export default function Home() {
   const [scopeYAuto, setScopeYAuto] = useState(true);
   const [scopeYScale, setScopeYScale] = useState(8000); // manual vertical full-scale
   const [fftSpan, setFftSpan] = useState<number | "full">("full"); // FFT frequency span [Hz]
+  const [recMs, setRecMs] = useState(2000); // DSP recorder window
+  const [recActive, setRecActive] = useState<Set<string>>(new Set(["audio", "threshold"]));
+
+  const recChannels = useMemo<RecChannel[]>(
+    () => [
+      { key: "audio", label: "audio", color: "#10b981", get: (f) => f.extras.audio },
+      { key: "threshold", label: "SAT thr", color: "#ef4444", get: (f) => f.extras.threshold },
+      { key: "ground", label: "ground", color: "#a855f7", get: (f) => f.extras.ground },
+      { key: "vdi", label: "vdi", color: "#f59e0b", get: (f) => f.extras.vdi },
+      { key: "I", label: "I", color: "#3b82f6", get: (f) => Object.values(f.harmonics)[0]?.i },
+      { key: "Q", label: "Q", color: "#22d3ee", get: (f) => Object.values(f.harmonics)[0]?.q },
+    ],
+    [],
+  );
+
+  const toggleRec = (k: string) =>
+    setRecActive((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
 
   // Keyboard zero: Enter or Z (mirrors the detector's ENTER=zero), unless typing in a control.
   useEffect(() => {
@@ -368,6 +392,61 @@ export default function Home() {
             </div>
             <p className="mt-2 text-xs text-muted">
               x: frequency [Hz] · y: |X| [dBFS] · Hann · dashed marker = peak
+            </p>
+          </Card>
+        )}
+
+        {tab === "dsp" && (
+          <Card>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-medium text-muted">
+                DSP recorder — SAT (signal vs threshold) &amp; filter/impulse response
+              </h2>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-1">
+                  {recChannels.map((c) => (
+                    <button
+                      key={c.key}
+                      onClick={() => toggleRec(c.key)}
+                      className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
+                        recActive.has(c.key) ? "text-foreground" : "border-border text-muted hover:text-foreground"
+                      }`}
+                      style={recActive.has(c.key) ? { borderColor: c.color, color: c.color } : undefined}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] uppercase tracking-wide text-muted">win</span>
+                  {[500, 1000, 2000, 5000, 10000].map((ms) => (
+                    <button
+                      key={ms}
+                      onClick={() => setRecMs(ms)}
+                      className={`rounded border px-1.5 py-0.5 text-xs tabular-nums transition-colors ${
+                        recMs === ms ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                      }`}
+                    >
+                      {ms / 1000}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="h-[28rem] w-full">
+              {t.hasIq || feature ? (
+                <Recorder
+                  trailRef={t.trailRef}
+                  channels={recChannels}
+                  active={recActive}
+                  windowMs={recMs}
+                />
+              ) : (
+                <RawUnavailable />
+              )}
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              x: time [ms] (0 = now) · SAT: audio vs threshold · tap the coil = impulse to see filter response
             </p>
           </Card>
         )}

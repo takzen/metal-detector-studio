@@ -36,6 +36,7 @@ _EXTRA_KEYS = {
     "VDI": "vdi",
     "G": "ground",
     "A": "audio",
+    "TH": "threshold",
     "K": "kgnd",
     "M": "mode",
     "PX": "px",
