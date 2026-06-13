@@ -1,80 +1,155 @@
 # Metal Detector Studio
 
-A real-time signal diagnostics, analysis, and visualization suite designed for custom metal detector development (VLF / Pulse Induction). This tool connects directly to your microcontroller (such as ATxmega) via USB-CDC or USART to stream, analyze, and tune signals on the fly.
+A real-time signal diagnostics, analysis, and visualization suite for custom metal
+detector development (VLF / Pulse Induction). It connects to the detector's
+microcontroller over **USB-CDC / USART**, streams per-harmonic I/Q telemetry and raw
+ADC blocks, and renders them as a vector hodograph, virtual oscilloscope, and live FFT
+for ground-balance and discrimination tuning.
 
-It is designed to run locally, providing high-performance telemetry visualization and deep integration with AI coding agents (like Claude, Codex) for smarter debugging.
+It is a **universal bench lab**: the detector under test is described by a JSON
+**device profile**, so the same studio drives different firmwares without code changes.
+And it runs **without hardware** — a built-in synthetic source reproduces the telemetry
+contract so the whole pipeline works on the bench before an MCU is connected.
+
+![Metal Detector Studio — live dashboard with XY hodograph and per-harmonic I/Q readout](assets/mds_1.webp)
+
+## Target devices (profiles)
+
+- **Spectral-G4** — flagship multi-frequency VLF detector (STM32G474 base + STM32G071
+  probe): 3 simultaneous harmonics via SHE-PWM (7.8125 / 23.4375 / 39.0625 kHz),
+  per-harmonic `{mag, phase}` + phase diffs (`dphase31`, `dphase51`) and raw I/Q.
+- **URD-1 / TAKTYK** — single-frequency VLF on ATxmega (USB-CDC telemetry).
+
+Adding a new detector means adding a profile (`backend/profiles/<id>.json`), not
+rewriting the PC software.
 
 ## System Architecture
 
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
 flowchart TD
-    A["Microcontroller<br>(e.g., ATxmega)"] -->|"USB-CDC / USART telemetry stream"| B["Python Backend<br>(FastAPI, WebSockets, MCP Server)"]
-    B -->|"High-speed WebSockets / MCP Tools"| C["Next.js Frontend<br>(React, Tailwind CSS, uPlot / ECharts)"]
+    A["Microcontroller<br>(STM32 / ATxmega)"] -->|"USB-CDC / USART"| B
+    S["Synthetic source<br>(bench, no hardware)"] -->|"same contract"| B
+    B["Python Backend<br>(FastAPI · WebSocket · profiles · MCP*)"] -->|"WebSocket telemetry / config"| C["Next.js Frontend<br>(React · Tailwind · uPlot)"]
 
     style A fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
+    style S fill:#1a1a1a,stroke:#10b981,stroke-width:2px,color:#ffffff
     style B fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
     style C fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
     linkStyle default stroke:#9ca3af,stroke-width:1px
 ```
 
-## Key Features
+\* MCP server is planned (see Status).
 
-- **Vector & Phase-Shift Analysis (XY Plot):** Live vector trail (hodograph) showing In-Phase (I) and Quadrature (Q) components for accurate target discrimination and Ground Balance alignment.
-- **Virtual Oscilloscope:** Real-time time-domain plotting of raw ADC receiver signals and digital filter outputs.
-- **Live FFT (Spectrum Analyzer):** Monitor environmental electromagnetic interference (EMI) to tune operational frequencies.
-- **Dynamic Data Mapping:** Universal JSON-based packet parsing, allowing easy adaptation to different microcontroller firmware versions without rewriting the PC software.
-- **AI-Agent Ready (Anthropic MCP):** Built-in Model Context Protocol (MCP) server, allowing coding assistants like Claude in VS Code to query telemetry, analyze phase shifts, and write DSP code directly.
-- **Bi-directional Control:** Send configuration commands back to the microcontroller to tweak filter coefficients, gain, or frequency in real-time.
+## Features
+
+- **Vector & Phase-Shift Analysis (XY hodograph):** live I/Q vector trail per harmonic
+  for target discrimination and ground-balance alignment.
+- **Virtual Oscilloscope:** real-time time-domain plot of the raw ADC receiver block.
+- **Live FFT (Spectrum Analyzer):** environmental EMI monitoring to tune frequencies.
+- **Dynamic, profile-driven mapping:** a device-agnostic JSON contract
+  (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
+  firmware without PC rewrites.
+- **Bi-directional Control:** send configuration back to the device (gain, mode,
+  frequency, …). Mirrored by the synthetic source for bench testing.
+- **AI-Agent Ready (Anthropic MCP):** planned MCP server exposing live telemetry as
+  tools for coding assistants.
+
+## Status
+
+Built end-to-end on synthetic data first; hardware transport slots in behind the same
+contract.
+
+| Area | State |
+| --- | --- |
+| Telemetry contract (`schema.json` + profiles) | ✅ |
+| Backend: FastAPI + WebSocket + synthetic source + config | ✅ |
+| Frontend: dashboard, XY hodograph, virtual oscilloscope | ✅ |
+| Live FFT | 🚧 planned |
+| Config panel (UI) | 🚧 planned |
+| Serial transport (real USB-CDC) | 🚧 planned |
+| MCP server | 🚧 planned |
+
+Roadmap and task breakdown live in `TASKS.md`.
 
 ## Tech Stack
 
-- **Frontend:** Next.js (React), Tailwind CSS, shadcn/ui, `uPlot` / `Apache ECharts` (high-frequency rendering).
-- **Backend:** Python 3.12+, FastAPI, `websockets`, `pyserial-asyncio`, `mcp` (Model Context Protocol).
-- **Hardware Compatibility:** Any microcontroller with USART/USB capability sending structured telemetry packets.
+- **Frontend:** Next.js 16 (React 19), Tailwind CSS v4, [uPlot](https://github.com/leeoniya/uplot)
+  for high-frequency time-series rendering. Package manager: **pnpm**.
+- **Backend:** Python ≥ 3.13 managed with [uv](https://docs.astral.sh/uv/), FastAPI,
+  `websockets`, NumPy, `pyserial-asyncio` (for the upcoming serial transport).
+- **Hardware compatibility:** any MCU streaming the telemetry contract over USART / USB-CDC.
 
 ## Project Structure
 
 ```text
-├── backend/               # Python / FastAPI server & serial communication
-│   ├── main.py            # Entry point (FastAPI & WebSocket server)
-│   ├── mcp_server.py      # Anthropic MCP implementation for AI integration
-│   └── schema.json        # Dynamic USART packet configuration
-└── frontend/              # Next.js web application
-    ├── components/        # Charts (uPlot/ECharts) and UI widgets
-    └── pages/             # Main diagnostic dashboard
+├── assets/                # screenshots / media
+├── backend/               # Python / FastAPI server + telemetry sources
+│   ├── main.py            # entry point (uvicorn)
+│   ├── schema.json        # device-agnostic packet grammar
+│   ├── profiles/          # device profiles (spectral_g4.json, urd1.json, …)
+│   ├── app/
+│   │   ├── profiles.py    # profile + schema loader/validation
+│   │   ├── config.py      # env-overridable settings
+│   │   ├── telemetry/     # pydantic models (the contract in code)
+│   │   ├── sources/       # synthetic source (+ serial, planned)
+│   │   └── server/        # FastAPI app + WebSocket broadcast hub
+│   └── scripts/ws_client.py  # WebSocket smoke-test client
+└── frontend/              # Next.js app
+    └── src/
+        ├── app/           # dashboard page + layout
+        ├── components/    # Hodograph, Scope (charts)
+        └── lib/           # telemetry types + WebSocket hook
 ```
 
 ## Getting Started
 
 ### Prerequisites
 
-- Python 3.12 or higher
-- Node.js 18.x or higher
-- A microcontroller (like ATxmega, STM32) configured for USB-CDC / Virtual COM Port telemetry.
+- Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/)
+- Node.js ≥ 18 and [pnpm](https://pnpm.io/)
+- (Optional) a detector MCU configured for USB-CDC telemetry — not required for bench work.
 
-### 1. Backend Setup
-
-Navigate to the backend directory, install dependencies, and run the FastAPI server:
+### 1. Backend
 
 ```bash
 cd backend
-pip install -r requirements.txt
-python main.py
+uv sync
+uv run python main.py
 ```
 
-### 2. Frontend Setup
+Serves on `http://127.0.0.1:8000`:
 
-Navigate to the frontend directory, install npm packages, and run the Next.js development server:
+- REST: `/api/health`, `/api/schema`, `/api/profiles`, `/api/profile`
+- WebSocket: `/ws/telemetry`
+
+Environment overrides: `METAL_LAB_PROFILE` (e.g. `urd1`), `METAL_LAB_SOURCE`
+(`synthetic` | `serial`), `METAL_LAB_HOST`, `METAL_LAB_PORT`.
+
+### 2. Frontend
 
 ```bash
-cd ../frontend
-npm install
-npm run dev
+cd frontend
+pnpm install
+pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser to view the diagnostic suite.
+Open the printed URL (default [http://localhost:3000](http://localhost:3000)) to view the
+diagnostic suite.
+
+## Telemetry contract
+
+The PC ↔ firmware contract is self-describing:
+
+- `backend/schema.json` — device-agnostic packet grammar (`hello`, `feature`, `raw`,
+  `config`, `config_ack`).
+- `backend/profiles/*.json` — concrete devices: harmonics, phase-diff definitions, raw
+  ADC parameters, stream rates, and the synthetic-source model.
+
+`feature` frames carry harmonics and phase diffs as keyed maps, so single- and
+multi-frequency detectors share one packet shape.
 
 ## AI Integration (Model Context Protocol)
 
-This repository includes an MCP server that exposes the detector's telemetry as tools for AI models. When using VS Code extensions like **Cline** or **Roo Code**, you can configure the MCP settings to allow Claude to read live ADC data, analyze filter performance, and suggest firmware modifications directly.
+Planned: an MCP server exposing live telemetry as tools for AI models, so assistants can
+read ADC/feature data, analyze phase shifts, and suggest firmware/DSP changes directly.
