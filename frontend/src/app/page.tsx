@@ -1,5 +1,7 @@
 "use client";
 
+import { Hodograph } from "@/components/Hodograph";
+import { colorFor } from "@/lib/palette";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 
 const DEG = 180 / Math.PI;
@@ -60,29 +62,59 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Harmonics */}
-      <section className="mt-6">
-        <h2 className="text-sm font-medium text-muted mb-3">Harmonics (I/Q feature frame)</h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {profile?.harmonics.map((h) => {
-            const s = feature?.harmonics[h.id];
-            return (
-              <div key={h.id} className="rounded-lg border border-border bg-panel p-4">
-                <div className="flex items-baseline justify-between">
-                  <span className="font-mono text-accent">{h.id}</span>
-                  <span className="text-xs text-muted">
-                    h{h.index} · {(h.freq_hz / 1000).toFixed(4)} kHz
-                  </span>
+      {/* Hodograph + harmonics */}
+      <section className="mt-6 grid gap-4 lg:grid-cols-2">
+        <div className="rounded-lg border border-border bg-panel p-4 flex flex-col">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-muted">XY hodograph (I/Q vector trail)</h2>
+            <div className="flex flex-wrap gap-3">
+              {profile?.harmonics.map((h, i) => (
+                <span key={h.id} className="inline-flex items-center gap-1.5 text-xs">
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: colorFor(i) }}
+                  />
+                  <span className="font-mono">{h.id}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="relative aspect-square w-full">
+            {profile && (
+              <Hodograph trailRef={t.trailRef} harmonics={profile.harmonics} />
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <h2 className="text-sm font-medium text-muted">Harmonics (I/Q feature frame)</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {profile?.harmonics.map((h, i) => {
+              const s = feature?.harmonics[h.id];
+              return (
+                <div key={h.id} className="rounded-lg border border-border bg-panel p-4">
+                  <div className="flex items-baseline justify-between">
+                    <span className="inline-flex items-center gap-2 font-mono">
+                      <span
+                        className="h-2.5 w-2.5 rounded-full"
+                        style={{ backgroundColor: colorFor(i) }}
+                      />
+                      {h.id}
+                    </span>
+                    <span className="text-xs text-muted">
+                      h{h.index} · {(h.freq_hz / 1000).toFixed(4)} kHz
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-y-2">
+                    <Stat label="mag" value={s ? fmt(s.mag) : "—"} />
+                    <Stat label="phase" value={s ? `${fmt(s.phase * DEG)}°` : "—"} />
+                    <Stat label="I" value={s ? fmt(s.i) : "—"} />
+                    <Stat label="Q" value={s ? fmt(s.q) : "—"} />
+                  </div>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-y-2">
-                  <Stat label="mag" value={s ? fmt(s.mag) : "—"} />
-                  <Stat label="phase" value={s ? `${fmt(s.phase * DEG)}°` : "—"} />
-                  <Stat label="I" value={s ? fmt(s.i) : "—"} />
-                  <Stat label="Q" value={s ? fmt(s.q) : "—"} />
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </section>
 
