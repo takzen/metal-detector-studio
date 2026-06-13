@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { ControlPanel } from "@/components/ControlPanel";
 import { Hodograph } from "@/components/Hodograph";
+import { IQScope } from "@/components/IQScope";
+import { IQSpectrum } from "@/components/IQSpectrum";
 import { Scope } from "@/components/Scope";
 import { SourceControls } from "@/components/SourceControls";
 import { Spectrum } from "@/components/Spectrum";
@@ -247,7 +249,9 @@ export default function Home() {
               </div>
             </div>
             <div className="h-[28rem] w-full">
-              {profile && raw ? (
+              {t.hasIq ? (
+                <IQScope iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} />
+              ) : profile && raw ? (
                 <Scope
                   rawRef={t.rawRef}
                   sampleRateHz={profile.raw.sample_rate_hz}
@@ -258,7 +262,7 @@ export default function Home() {
                 <RawUnavailable />
               )}
             </div>
-            <p className="mt-2 text-xs text-muted">x: time [ms] · y: ADC [lsb]</p>
+            <p className="mt-2 text-xs text-muted">x: time [ms] · y: demod I/Q</p>
           </Card>
         )}
 
@@ -266,7 +270,9 @@ export default function Home() {
           <Card>
             <h2 className="mb-3 text-sm font-medium text-muted">Live FFT — EMI scout</h2>
             <div className="h-[28rem] w-full">
-              {profile && raw ? (
+              {t.hasIq ? (
+                <IQSpectrum iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} />
+              ) : profile && raw ? (
                 <Spectrum
                   rawRef={t.rawRef}
                   sampleRateHz={profile.raw.sample_rate_hz}

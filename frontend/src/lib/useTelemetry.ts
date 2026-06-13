@@ -8,12 +8,14 @@ import type {
   Hello,
   Profile,
   RawBlock,
+  RawIQBlock,
   ServerMessage,
 } from "./types";
 
 export type ConnStatus = "connecting" | "open" | "closed";
 
 const TRAIL_MAX = 2048; // recent feature frames kept for the hodograph trail
+const IQ_MAX = 2000; // rolling 1 kHz I/Q sample buffer (~2 s) for scope/FFT
 
 export interface Telemetry {
   status: ConnStatus;
@@ -26,6 +28,11 @@ export interface Telemetry {
   featureRef: React.RefObject<FeatureFrame | null>;
   rawRef: React.RefObject<RawBlock | null>;
   trailRef: React.RefObject<FeatureFrame[]>;
+  /** Rolling 1 kHz I/Q buffers (serial scope/FFT). */
+  iqIRef: React.RefObject<number[]>;
+  iqQRef: React.RefObject<number[]>;
+  iqFsRef: React.RefObject<number>;
+  hasIq: boolean;
   stats: { featureHz: number; rawHz: number; lastAck: ConfigAck | null };
   sendConfig: (key: string, value: unknown) => void;
 }
@@ -42,10 +49,15 @@ export function useTelemetry(): Telemetry {
     lastAck: null,
   });
 
+  const [hasIq, setHasIq] = useState(false);
+
   const wsRef = useRef<WebSocket | null>(null);
   const featureRef = useRef<FeatureFrame | null>(null);
   const rawRef = useRef<RawBlock | null>(null);
   const trailRef = useRef<FeatureFrame[]>([]);
+  const iqIRef = useRef<number[]>([]);
+  const iqQRef = useRef<number[]>([]);
+  const iqFsRef = useRef<number>(1000);
 
   // arrival timestamps for rate measurement (sliding window; data can arrive bursty)
   const featTimes = useRef<number[]>([]);
@@ -87,6 +99,9 @@ export function useTelemetry(): Telemetry {
             setProfile(h.profile);
             setSchemaVersion(h.schema_version);
             trailRef.current = [];
+            iqIRef.current = [];
+            iqQRef.current = [];
+            setHasIq(false);
             break;
           }
           case "feature": {
@@ -100,6 +115,21 @@ export function useTelemetry(): Telemetry {
           case "raw": {
             rawRef.current = msg as RawBlock;
             rawTimes.current.push(performance.now());
+            break;
+          }
+          case "raw_iq": {
+            const b = msg as RawIQBlock;
+            iqFsRef.current = b.sample_rate_hz || 1000;
+            const bi = iqIRef.current;
+            const bq = iqQRef.current;
+            for (let k = 0; k < b.i.length; k++) {
+              bi.push(b.i[k]);
+              bq.push(b.q[k]);
+            }
+            if (bi.length > IQ_MAX) bi.splice(0, bi.length - IQ_MAX);
+            if (bq.length > IQ_MAX) bq.splice(0, bq.length - IQ_MAX);
+            rawTimes.current.push(performance.now());
+            setHasIq(true); // no-op once already true
             break;
           }
           case "config_ack": {
@@ -164,6 +194,10 @@ export function useTelemetry(): Telemetry {
     featureRef,
     rawRef,
     trailRef,
+    iqIRef,
+    iqQRef,
+    iqFsRef,
+    hasIq,
     stats,
     sendConfig,
   };

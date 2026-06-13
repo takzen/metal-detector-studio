@@ -57,6 +57,18 @@
         "samples": { "type": "array<int16>" }
       }
     },
+    "raw_iq": {
+      "direction": "device->pc",
+      "description": "Raw demodulated I/Q block (e.g. TAKTYK ~1 kHz). For devices that demodulate in analog and expose no high-rate RX waveform; feeds the scope + baseband FFT. i/q same length.",
+      "fields": {
+        "type": { "type": "string", "const": "raw_iq" },
+        "seq": { "type": "uint32" },
+        "t": { "type": "float", "unit": "s" },
+        "sample_rate_hz": { "type": "uint32", "unit": "Hz" },
+        "i": { "type": "array<int16>" },
+        "q": { "type": "array<int16>" }
+      }
+    },
     "config": {
       "direction": "pc->device",
       "description": "Configuration command back to the device (and to the synthetic source). Allowed keys come from the active profile.",

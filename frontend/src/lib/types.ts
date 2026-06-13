@@ -67,6 +67,15 @@ export interface Profile {
   synth?: SynthSpec;
 }
 
+export interface RawIQBlock {
+  type: "raw_iq";
+  seq: number;
+  t: number;
+  sample_rate_hz: number;
+  i: number[];
+  q: number[];
+}
+
 export interface Hello {
   type: "hello";
   schema_version: string;
@@ -87,4 +96,4 @@ export interface ConfigAck {
   detail: string;
 }
 
-export type ServerMessage = Hello | FeatureFrame | RawBlock | ConfigAck;
+export type ServerMessage = Hello | FeatureFrame | RawBlock | RawIQBlock | ConfigAck;

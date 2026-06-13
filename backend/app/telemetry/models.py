@@ -42,6 +42,17 @@ class RawBlock(BaseModel):
     samples: list[int]  # int16-range
 
 
+class RawIQBlock(BaseModel):
+    """Raw 1 kHz I/Q block for the scope and baseband FFT (e.g. TAKTYK demod stream)."""
+
+    type: Literal["raw_iq"] = "raw_iq"
+    seq: int
+    t: float
+    sample_rate_hz: int
+    i: list[int]  # in-phase samples, int16-range
+    q: list[int]  # quadrature samples
+
+
 class Hello(BaseModel):
     """Handshake sent once on connect; binds the PC to the active profile."""
 
@@ -69,4 +80,4 @@ class ConfigAck(BaseModel):
 
 
 # Anything a source may emit downstream to clients.
-TelemetryPacket = FeatureFrame | RawBlock
+TelemetryPacket = FeatureFrame | RawBlock | RawIQBlock

@@ -1,16 +1,18 @@
 """Serial telemetry source — real USB-CDC hardware (Milestone D).
 
-First target: TAKTYK / URD-1 firmware (ATxmega), which streams ~50 Hz token-based
-ASCII telemetry over a virtual COM port, e.g.:
+Target: TAKTYK / URD-1 firmware (ATxmega), streaming line-delimited ASCII over a
+virtual COM port:
 
-    X:77792 Y:507584 VDI:127 G:-5639 A:0 K:-4 M:3 PX:107840 PY:53846\r\n
+    feature (~50 Hz):
+      X:.. Y:.. OX:.. OY:.. VDI:.. G:.. A:.. K:.. M:.. PX:.. PY:..\r\n
+    raw I/Q block (1 kHz, ~20 samples per feature):
+      RB:1000 20 i0 q0 i1 q1 ...\r\n
 
-Parsing is token-based (key:value, unknown tokens ignored) and resynchronizes on the
-"X:" record marker, so it tolerates the dropped \r\n / truncated frames that occur when
-the device's CDC buffer overruns. X/Y are the I/Q vector of the single harmonic; the
-rest are carried as extras. The device is send-only here, so apply_config is unsupported.
+Parsing is line-based and token-based (unknown tokens ignored). OX/OY (the device's
+ground-tracked delta vector) drive the hodograph so it matches the device and stays in
+sync with zeroing; X/Y (raw) are kept as extras. The RB block feeds the scope/FFT.
+The device is send-only, so apply_config is unsupported.
 
-Map this source to the single-harmonic profile, e.g.:
     METAL_LAB_SOURCE=serial METAL_LAB_PROFILE=urd1 uv run python main.py
 """
 
@@ -18,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import re
 import threading
 import time
 from collections import deque
@@ -27,13 +28,10 @@ from collections.abc import AsyncIterator
 import serial  # pyserial (blocking, read in a thread — robust on Windows)
 
 from ..profiles import Profile
-from ..telemetry.models import FeatureFrame, HarmonicSample, TelemetryPacket
+from ..telemetry.models import FeatureFrame, HarmonicSample, RawIQBlock, TelemetryPacket
 from .base import TelemetrySource
 
-# Record starts at a standalone "X:" — not the "X:" inside "PX:".
-_RECORD_MARK = re.compile(r"(?<![A-Za-z])X:")
-
-# Map firmware token -> feature extra key.
+# firmware token -> feature extra key
 _EXTRA_KEYS = {
     "VDI": "vdi",
     "G": "ground",
@@ -42,12 +40,17 @@ _EXTRA_KEYS = {
     "M": "mode",
     "PX": "px",
     "PY": "py",
+    "X": "x_raw",
+    "Y": "y_raw",
 }
 
+# queue item: ("f", feature_dict) | ("iq", (sample_rate, i_list, q_list))
+_Item = tuple[str, object]
 
-def _parse_record(rec: str) -> dict[str, float]:
+
+def _parse_feature(line: str) -> dict[str, float]:
     out: dict[str, float] = {}
-    for tok in rec.split():
+    for tok in line.split():
         key, sep, val = tok.partition(":")
         if not sep:
             continue
@@ -58,13 +61,22 @@ def _parse_record(rec: str) -> dict[str, float]:
     return out
 
 
-def _extract(buf: str) -> tuple[list[str], str]:
-    """Split the buffer into complete records, keeping the trailing partial one."""
-    idxs = [m.start() for m in _RECORD_MARK.finditer(buf)]
-    if len(idxs) < 2:
-        return [], buf
-    records = [buf[idxs[k] : idxs[k + 1]] for k in range(len(idxs) - 1)]
-    return records, buf[idxs[-1] :]
+def _parse_raw(line: str) -> tuple[int, list[int], list[int]] | None:
+    """Parse 'RB:<fs> <n> i0 q0 i1 q1 ...' -> (fs, i_list, q_list)."""
+    parts = line.split()
+    if not parts or not parts[0].startswith("RB:"):
+        return None
+    try:
+        fs = int(parts[0][3:])
+        n = int(parts[1])
+        nums = [int(x) for x in parts[2 : 2 + 2 * n]]
+    except (ValueError, IndexError):
+        return None
+    i_list = nums[0::2]
+    q_list = nums[1::2]
+    if not i_list or len(i_list) != len(q_list):
+        return None
+    return fs, i_list, q_list
 
 
 class SerialSource(TelemetrySource):
@@ -74,12 +86,8 @@ class SerialSource(TelemetrySource):
         self.baud = baud
         self._hid = profile.harmonic_ids[0]  # single-harmonic device
 
-    def _reader_loop(self, q: deque[dict[str, float]], stop: threading.Event) -> None:
-        """Blocking serial read in a background thread: parse records into the queue.
-
-        Small reads with a short timeout deliver frames continuously (~46 Hz) instead
-        of the big bursts pyserial-asyncio produced on Windows.
-        """
+    def _reader_loop(self, q: deque[_Item], stop: threading.Event) -> None:
+        """Blocking serial read in a background thread (continuous on Windows)."""
         while not stop.is_set():
             try:
                 ser = serial.Serial(self.port, self.baud, timeout=0.02)
@@ -89,19 +97,27 @@ class SerialSource(TelemetrySource):
             buf = ""
             try:
                 while not stop.is_set():
-                    data = ser.read(128)
+                    data = ser.read(256)
                     if not data:
                         continue
                     buf += data.decode("ascii", errors="ignore")
-                    records, buf = _extract(buf)
+                    *lines, buf = buf.split("\n")
                     if len(buf) > 8192:
-                        buf = buf[-1024:]
-                    for rec in records:
-                        f = _parse_record(rec)
-                        if "X" in f and "Y" in f:
-                            q.append(f)
-                            if len(q) > 500:
-                                q.popleft()
+                        buf = buf[-1024:]  # runaway guard on a never-terminated line
+                    for raw_line in lines:
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        if line.startswith("RB:"):
+                            parsed = _parse_raw(line)
+                            if parsed:
+                                q.append(("iq", parsed))
+                        elif line.startswith("X:"):
+                            f = _parse_feature(line)
+                            if "X" in f and "Y" in f:
+                                q.append(("f", f))
+                        if len(q) > 1000:
+                            q.popleft()
             except serial.SerialException:
                 pass
             finally:
@@ -109,25 +125,36 @@ class SerialSource(TelemetrySource):
             time.sleep(0.5)
 
     async def stream(self) -> AsyncIterator[TelemetryPacket]:
-        q: deque[dict[str, float]] = deque()
+        q: deque[_Item] = deque()
         stop = threading.Event()
         thread = threading.Thread(target=self._reader_loop, args=(q, stop), daemon=True)
         thread.start()
-        seq = 0
+        fseq = 0
+        rseq = 0
         try:
             while True:
                 if q:
-                    f = q.popleft()
-                    yield self._feature(seq, f)
-                    seq += 1
+                    kind, payload = q.popleft()
+                    if kind == "f":
+                        yield self._feature(fseq, payload)  # type: ignore[arg-type]
+                        fseq += 1
+                    else:
+                        fs, i_list, q_list = payload  # type: ignore[misc]
+                        yield RawIQBlock(
+                            seq=rseq, t=time.monotonic(),
+                            sample_rate_hz=fs, i=i_list, q=q_list,
+                        )
+                        rseq += 1
                 else:
                     await asyncio.sleep(0.003)
         finally:
             stop.set()
 
     def _feature(self, seq: int, f: dict[str, float]) -> FeatureFrame:
-        i = f["X"]
-        q = f["Y"]
+        # Prefer the device's ground-tracked delta (OX/OY) for the hodograph;
+        # fall back to raw X/Y if the firmware doesn't send it.
+        i = f.get("OX", f["X"])
+        q = f.get("OY", f["Y"])
         harmonics = {
             self._hid: HarmonicSample(mag=math.hypot(i, q), phase=math.atan2(q, i), i=i, q=q)
         }
