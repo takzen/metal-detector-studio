@@ -96,7 +96,8 @@ export function Hodograph({
         const s = latest?.harmonics[harm.id];
         if (!s) return;
         const color = colorFor(hi);
-        const x = cx + (s.i - bx(harm.id)) * scale;
+        // X axis mirrored: ferrite / 0° sits on the LEFT (matches the device).
+        const x = cx - (s.i - bx(harm.id)) * scale;
         const y = cy - (s.q - by(harm.id)) * scale;
         ctx.globalAlpha = 0.9;
         ctx.strokeStyle = color;
@@ -149,6 +150,7 @@ function drawGrid(
   ctx.fillStyle = "#8b98a9";
   ctx.font = "10px var(--font-geist-mono), monospace";
   ctx.fillText(`full-scale ${Math.round(peak)}`, cx + 4, cy - radius + 12);
-  ctx.fillText("I →", cx + radius - 22, cy - 4);
+  ctx.fillText("Fe 0°", cx - radius + 2, cy - 4);
+  ctx.fillText("cond.", cx + radius - 28, cy - 4);
   ctx.fillText("Q ↑", cx + 4, cy - radius + 24);
 }
