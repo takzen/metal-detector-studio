@@ -182,6 +182,22 @@ export default function Home() {
                     zeroSignal={zeroNonce}
                   />
                 )}
+                {/* large, readable phase-angle readout (smoothed) */}
+                <div className="pointer-events-none absolute left-3 top-2 flex flex-col gap-0.5">
+                  {profile?.harmonics.map((h, i) => {
+                    const s = feature?.harmonics[h.id];
+                    const deg = s ? (((Math.atan2(s.q, s.i) * DEG) % 360) + 360) % 360 : null;
+                    return (
+                      <span
+                        key={h.id}
+                        className="font-mono text-3xl leading-none tabular-nums"
+                        style={{ color: colorFor(i) }}
+                      >
+                        {deg === null ? "—" : deg.toFixed(1)}°
+                      </span>
+                    );
+                  })}
+                </div>
               </div>
             </Card>
 
