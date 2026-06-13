@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ControlPanel } from "@/components/ControlPanel";
 import { Hodograph } from "@/components/Hodograph";
 import { Scope } from "@/components/Scope";
 import { Spectrum } from "@/components/Spectrum";
@@ -10,11 +11,12 @@ import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 const DEG = 180 / Math.PI;
 const fmt = (n: number, d = 1) => n.toFixed(d);
 
-type TabId = "hodograph" | "scope" | "fft";
+type TabId = "hodograph" | "scope" | "fft" | "control";
 const TABS: { id: TabId; label: string }[] = [
   { id: "hodograph", label: "XY hodograph" },
   { id: "scope", label: "Oscilloscope" },
   { id: "fft", label: "Live FFT" },
+  { id: "control", label: "Control" },
 ];
 
 function StatusDot({ status }: { status: ConnStatus }) {
@@ -245,6 +247,15 @@ export default function Home() {
             </p>
           </Card>
         )}
+
+        {tab === "control" &&
+          (profile ? (
+            <ControlPanel profile={profile} sendConfig={t.sendConfig} lastAck={stats.lastAck} />
+          ) : (
+            <Card>
+              <p className="text-sm text-muted">waiting for device profile…</p>
+            </Card>
+          ))}
       </section>
     </main>
   );
