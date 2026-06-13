@@ -118,47 +118,50 @@ export function FilterLab() {
     const ih = impHost.current;
     const fh = frHost.current;
     if (!ih || !fh) return;
-    const ro = new ResizeObserver(() => {
-      for (const [host, uref, kind] of [
-        [ih, uImp, "imp"],
-        [fh, uFr, "fr"],
+
+    if (!uImp.current) {
+      uImp.current = makePlot(
+        ih,
+        [{ label: "h[n]", stroke: "#10b981", width: 1, points: { show: false } }],
+        () => [0, (M / fsRef.current) * 1000],
+        () => {
+          const d = dataRef.current.impData[1] as number[];
+          let lo = 0;
+          let hi = 0;
+          for (const v of d) {
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+          }
+          const p = (hi - lo) * 0.1 || 0.1;
+          return [lo - p, hi + p];
+        },
+      );
+      uImp.current.setData(dataRef.current.impData);
+    }
+    if (!uFr.current) {
+      uFr.current = makePlot(
+        fh,
+        [{ label: "|H| dB", stroke: "#3b82f6", width: 1, points: { show: false } }],
+        () => [0, fsRef.current / 2],
+        [-60, 3],
+      );
+      uFr.current.setData(dataRef.current.frData);
+    }
+
+    const fit = () => {
+      for (const [host, u] of [
+        [ih, uImp.current],
+        [fh, uFr.current],
       ] as const) {
+        if (!u) continue;
         const r = host.getBoundingClientRect();
         const w = Math.max(1, Math.round(r.width));
         const h = Math.max(1, Math.round(r.height));
-        if (w <= 1 || h <= 1) continue;
-        if (!uref.current) {
-          if (kind === "imp") {
-            uref.current = makePlot(
-              host,
-              [{ label: "h[n]", stroke: "#10b981", width: 1, points: { show: false } }],
-              () => [0, (M / fsRef.current) * 1000],
-              () => {
-                const d = dataRef.current.impData[1] as number[];
-                let lo = 0;
-                let hi = 0;
-                for (const v of d) {
-                  if (v < lo) lo = v;
-                  if (v > hi) hi = v;
-                }
-                const p = (hi - lo) * 0.1 || 0.1;
-                return [lo - p, hi + p];
-              },
-            );
-            uref.current.setData(dataRef.current.impData);
-          } else {
-            uref.current = makePlot(
-              host,
-              [{ label: "|H| dB", stroke: "#3b82f6", width: 1, points: { show: false } }],
-              () => [0, fsRef.current / 2],
-              [-60, 3],
-            );
-            uref.current.setData(dataRef.current.frData);
-          }
-        }
-        uref.current.setSize({ width: w, height: h });
+        if (w > 1 && h > 1) u.setSize({ width: w, height: h });
       }
-    });
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
     ro.observe(ih);
     ro.observe(fh);
     return () => {

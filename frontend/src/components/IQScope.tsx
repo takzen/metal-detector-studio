@@ -32,13 +32,47 @@ export function IQScope({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-
-    let u: uPlot | null = null;
     let af = 0;
+
+    const r0 = host.getBoundingClientRect();
+    const opts: uPlot.Options = {
+      width: Math.max(1, Math.round(r0.width)),
+      height: Math.max(1, Math.round(r0.height)),
+      scales: {
+        x: { time: false, range: () => [0, winRef.current] },
+        y: {
+          range: () => {
+            const ys = yRef.current;
+            return ys === "auto" ? [-peakRef.current, peakRef.current] : [-ys, ys];
+          },
+        },
+      },
+      axes: [
+        { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 },
+          values: (_u, s) => s.map((v) => v.toFixed(0)) },
+        { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 }, size: 52 },
+      ],
+      series: [
+        {},
+        { label: "I", stroke: "#3b82f6", width: 1, points: { show: false } },
+        { label: "Q", stroke: "#f59e0b", width: 1, points: { show: false } },
+      ],
+      cursor: { y: false },
+      legend: { show: false },
+    };
+    const u = new uPlot(opts, [[], [], []] as unknown as uPlot.AlignedData, host);
+
+    const ro = new ResizeObserver(() => {
+      const r = host.getBoundingClientRect();
+      const w = Math.max(1, Math.round(r.width));
+      const h = Math.max(1, Math.round(r.height));
+      if (w > 1 && h > 1) u.setSize({ width: w, height: h });
+    });
+    ro.observe(host);
 
     const tick = () => {
       af = requestAnimationFrame(tick);
-      if (!u || !runRef.current) return;
+      if (!runRef.current) return;
       const ib = iRef.current;
       const qb = qRef.current;
       const fs = fsRef.current || 1000;
@@ -62,54 +96,12 @@ export function IQScope({
       if (yRef.current === "auto") peakRef.current += 0.1 * (peak * 1.1 - peakRef.current);
       u.setData([xs, iSeg, qSeg], false);
     };
-
-    const create = (w: number, h: number) => {
-      const opts: uPlot.Options = {
-        width: w,
-        height: h,
-        scales: {
-          x: { time: false, range: () => [0, winRef.current] },
-          y: {
-            range: () => {
-              const ys = yRef.current;
-              return ys === "auto" ? [-peakRef.current, peakRef.current] : [-ys, ys];
-            },
-          },
-        },
-        axes: [
-          { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 },
-            values: (_u, s) => s.map((v) => v.toFixed(0)) },
-          { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 }, size: 52 },
-        ],
-        series: [
-          {},
-          { label: "I", stroke: "#3b82f6", width: 1, points: { show: false } },
-          { label: "Q", stroke: "#f59e0b", width: 1, points: { show: false } },
-        ],
-        cursor: { y: false },
-        legend: { show: false },
-      };
-      u = new uPlot(opts, [[], [], []] as unknown as uPlot.AlignedData, host);
-      af = requestAnimationFrame(tick);
-    };
-
-    // Create the chart only once the container has a real size (fixes blank-until-click).
-    const ensure = () => {
-      const r = host.getBoundingClientRect();
-      const w = Math.max(1, Math.round(r.width));
-      const h = Math.max(1, Math.round(r.height));
-      if (w <= 1 || h <= 1) return;
-      if (!u) create(w, h);
-      else u.setSize({ width: w, height: h });
-    };
-    ensure(); // immediate (size is valid post-paint) so it draws without interaction
-    const ro = new ResizeObserver(ensure);
-    ro.observe(host);
+    af = requestAnimationFrame(tick);
 
     return () => {
-      ro.disconnect();
       cancelAnimationFrame(af);
-      u?.destroy();
+      ro.disconnect();
+      u.destroy();
     };
   }, [iRef, qRef, fsRef]);
 

@@ -37,12 +37,40 @@ export function Recorder({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    let u: uPlot | null = null;
     let af = 0;
+
+    const r0 = host.getBoundingClientRect();
+    const opts: uPlot.Options = {
+      width: Math.max(1, Math.round(r0.width)),
+      height: Math.max(1, Math.round(r0.height)),
+      scales: {
+        x: { time: false, range: () => [-winRef.current, 0] },
+        y: { range: () => [loRef.current, hiRef.current] },
+      },
+      axes: [
+        { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 },
+          values: (_u, s) => s.map((v) => v.toFixed(0)) },
+        { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 }, size: 56 },
+      ],
+      series: [
+        {},
+        ...channels.map((c) => ({ label: c.label, stroke: c.color, width: 1, points: { show: false } })),
+      ],
+      cursor: { y: false },
+      legend: { show: false }, // channel toggle buttons act as the legend
+    };
+    const u = new uPlot(opts, [[], ...channels.map(() => [])] as unknown as uPlot.AlignedData, host);
+
+    const ro = new ResizeObserver(() => {
+      const r = host.getBoundingClientRect();
+      const w = Math.max(1, Math.round(r.width));
+      const h = Math.max(1, Math.round(r.height));
+      if (w > 1 && h > 1) u.setSize({ width: w, height: h });
+    });
+    ro.observe(host);
 
     const tick = () => {
       af = requestAnimationFrame(tick);
-      if (!u) return;
       const trail = trailRef.current;
       if (trail.length < 2) return;
       const tNow = trail[trail.length - 1].t;
@@ -91,47 +119,12 @@ export function Recorder({
 
       u.setData([xs, ...cols] as unknown as uPlot.AlignedData, false);
     };
-
-    const create = (w: number, h: number) => {
-      const opts: uPlot.Options = {
-        width: w,
-        height: h,
-        scales: {
-          x: { time: false, range: () => [-winRef.current, 0] },
-          y: { range: () => [loRef.current, hiRef.current] },
-        },
-        axes: [
-          { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 },
-            values: (_u, s) => s.map((v) => v.toFixed(0)) },
-          { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 }, size: 56 },
-        ],
-        series: [
-          {},
-          ...channels.map((c) => ({ label: c.label, stroke: c.color, width: 1, points: { show: false } })),
-        ],
-        cursor: { y: false },
-        legend: { show: false }, // channel toggle buttons act as the legend
-      };
-      u = new uPlot(opts, [[], ...channels.map(() => [])] as unknown as uPlot.AlignedData, host);
-      af = requestAnimationFrame(tick);
-    };
-
-    const ensure = () => {
-      const r = host.getBoundingClientRect();
-      const w = Math.max(1, Math.round(r.width));
-      const h = Math.max(1, Math.round(r.height));
-      if (w <= 1 || h <= 1) return;
-      if (!u) create(w, h);
-      else u.setSize({ width: w, height: h });
-    };
-    ensure();
-    const ro = new ResizeObserver(ensure);
-    ro.observe(host);
+    af = requestAnimationFrame(tick);
 
     return () => {
-      ro.disconnect();
       cancelAnimationFrame(af);
-      u?.destroy();
+      ro.disconnect();
+      u.destroy();
     };
   }, [trailRef, channels]);
 
