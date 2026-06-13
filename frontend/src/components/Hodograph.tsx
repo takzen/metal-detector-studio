@@ -96,9 +96,11 @@ export function Hodograph({
         const s = latest?.harmonics[harm.id];
         if (!s) return;
         const color = colorFor(hi);
+        const di = s.i - bx(harm.id);
+        const dq = s.q - by(harm.id);
         // X axis mirrored: ferrite / 0° sits on the LEFT (matches the device).
-        const x = cx - (s.i - bx(harm.id)) * scale;
-        const y = cy - (s.q - by(harm.id)) * scale;
+        const x = cx - di * scale;
+        const y = cy - dq * scale;
         ctx.globalAlpha = 0.9;
         ctx.strokeStyle = color;
         ctx.lineWidth = 1.5;
@@ -111,6 +113,14 @@ export function Hodograph({
         ctx.beginPath();
         ctx.arc(x, y, 4, 0, Math.PI * 2);
         ctx.fill();
+        // true I/Q demod phase of the delta, in degrees, on the tip
+        const deg = (Math.atan2(dq, di) * 180) / Math.PI;
+        ctx.font = "11px var(--font-geist-mono), monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`${harm.id} ${deg.toFixed(1)}°`, x + 7, y);
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
       });
       ctx.restore();
     };
@@ -147,10 +157,31 @@ function drawGrid(
   ctx.moveTo(cx, cy - radius);
   ctx.lineTo(cx, cy + radius);
   ctx.stroke();
+
+  // --- degree protractor: I/Q demod phase atan2(Q,I); mirrored X (0° = ferrite, left) ---
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let d = 0; d < 360; d += 15) {
+    const a = (d * Math.PI) / 180;
+    // screen direction for phase d (matches the mirrored-X tip mapping)
+    const dirx = -Math.cos(a);
+    const diry = -Math.sin(a);
+    const major = d % 30 === 0;
+    ctx.strokeStyle = "#2a3342";
+    ctx.beginPath();
+    ctx.moveTo(cx + dirx * radius * (major ? 0.9 : 0.95), cy + diry * radius * (major ? 0.9 : 0.95));
+    ctx.lineTo(cx + dirx * radius, cy + diry * radius);
+    ctx.stroke();
+    if (major) {
+      ctx.fillStyle = "#6b7686";
+      ctx.font = "9px var(--font-geist-mono), monospace";
+      ctx.fillText(`${d}`, cx + dirx * radius * 0.82, cy + diry * radius * 0.82);
+    }
+  }
+  ctx.textAlign = "start";
+  ctx.textBaseline = "alphabetic";
+
   ctx.fillStyle = "#8b98a9";
   ctx.font = "10px var(--font-geist-mono), monospace";
   ctx.fillText(`full-scale ${Math.round(peak)}`, cx + 4, cy - radius + 12);
-  ctx.fillText("Fe 0°", cx - radius + 2, cy - 4);
-  ctx.fillText("cond.", cx + radius - 28, cy - 4);
-  ctx.fillText("Q ↑", cx + 4, cy - radius + 24);
 }
