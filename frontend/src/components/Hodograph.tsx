@@ -4,8 +4,13 @@ import { useEffect, useRef } from "react";
 import { colorFor } from "@/lib/palette";
 import type { FeatureFrame, Harmonic } from "@/lib/types";
 
-const TRAIL_DRAW = 320; // recent frames rendered as the fading trail
-const BASELINE_ALPHA = 0.02; // ground-tracking speed for auto-zero
+// Mirrors the device SERVICE2 screen: a single DELTA vector vs the tracked ground
+// (ground at centre), auto-scaled to a slowly-decaying peak with a floor so it never
+// zooms into noise when idle. One vector per harmonic — no point cloud.
+const BASELINE_ALPHA = 0.02; // ground-tracking speed (per new frame)
+const PEAK_DECAY = 1 / 64; // slow peak decay per new frame (like SERVICE2 peak>>6)
+const FLOOR_FRAC = 0.02; // peak floor as a fraction of the ground magnitude
+const ABS_FLOOR = 1e-6;
 
 export function Hodograph({
   trailRef,
@@ -15,7 +20,7 @@ export function Hodograph({
   harmonics: Harmonic[];
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const extentRef = useRef(1000); // smoothed auto-range (lsb)
+  const peakRef = useRef(1);
   const baselineRef = useRef<Map<string, { i: number; q: number }>>(new Map());
   const lastSeqRef = useRef(-1);
 
@@ -52,12 +57,16 @@ export function Hodograph({
       const cx = w / 2;
       const cy = h / 2;
       const half = Math.min(w, h) / 2;
+      const radius = half * 0.92;
       const base = baselineRef.current;
 
-      // --- update ground baseline (slow EMA), once per new frame (by seq) ---
       const latest = trail[trail.length - 1];
+
+      // --- once per new frame: track ground + update decaying peak ---
       if (latest && latest.seq !== lastSeqRef.current) {
         lastSeqRef.current = latest.seq;
+        let frameMag = 0;
+        let groundMag = 0;
         for (const harm of harmonics) {
           const s = latest.harmonics[harm.id];
           if (!s) continue;
@@ -65,70 +74,42 @@ export function Hodograph({
           b.i += BASELINE_ALPHA * (s.i - b.i);
           b.q += BASELINE_ALPHA * (s.q - b.q);
           base.set(harm.id, b);
+          frameMag = Math.max(frameMag, Math.hypot(s.i - b.i, s.q - b.q));
+          groundMag = Math.max(groundMag, Math.hypot(b.i, b.q));
         }
+        let peak = peakRef.current * (1 - PEAK_DECAY);
+        if (frameMag > peak) peak = frameMag;
+        const floor = Math.max(ABS_FLOOR, FLOOR_FRAC * groundMag);
+        if (peak < floor) peak = floor;
+        peakRef.current = peak;
       }
-      // Always plot the DELTA vs the tracked ground (raw absolute angle is useless
-      // for a detector; ground sits at the centre, targets loop out at their angle).
+
+      const peak = peakRef.current;
+      const scale = radius / peak;
       const bx = (id: string) => base.get(id)?.i ?? 0;
       const by = (id: string) => base.get(id)?.q ?? 0;
 
-      // --- auto-range from the visible trail (after baseline removal) ---
-      const start = Math.max(0, trail.length - TRAIL_DRAW);
-      let peak = 1;
-      for (let k = start; k < trail.length; k++) {
-        const hs = trail[k].harmonics;
-        for (const harm of harmonics) {
-          const s = hs[harm.id];
-          if (!s) continue;
-          const m = Math.max(Math.abs(s.i - bx(harm.id)), Math.abs(s.q - by(harm.id)));
-          if (m > peak) peak = m;
-        }
-      }
-      // smooth toward peak*1.15 so the view doesn't jitter
-      const target = peak * 1.15;
-      extentRef.current += (target - extentRef.current) * 0.08;
-      const extent = extentRef.current;
-      const scale = (half * 0.92) / extent;
+      drawGrid(ctx, cx, cy, radius, peak);
 
-      drawGrid(ctx, cx, cy, half, extent);
-
-      // --- per-harmonic trail ---
+      // one live vector per harmonic, from centre to tip (the SERVICE2 view)
       harmonics.forEach((harm, hi) => {
+        const s = latest?.harmonics[harm.id];
+        if (!s) return;
         const color = colorFor(hi);
-        const obx = bx(harm.id);
-        const oby = by(harm.id);
-        const n = trail.length - start;
-        for (let k = start; k < trail.length; k++) {
-          const s = trail[k].harmonics[harm.id];
-          if (!s) continue;
-          const age = (k - start) / Math.max(1, n); // 0 old .. 1 new
-          ctx.globalAlpha = 0.05 + 0.55 * age;
-          ctx.fillStyle = color;
-          const x = cx + (s.i - obx) * scale;
-          const y = cy - (s.q - oby) * scale;
-          const r = 0.6 + 1.4 * age;
-          ctx.beginPath();
-          ctx.arc(x, y, r, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        // latest point + vector from origin
-        const last = trail[trail.length - 1]?.harmonics[harm.id];
-        if (last) {
-          const x = cx + (last.i - obx) * scale;
-          const y = cy - (last.q - oby) * scale;
-          ctx.globalAlpha = 0.35;
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(cx, cy);
-          ctx.lineTo(x, y);
-          ctx.stroke();
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
+        const x = cx + (s.i - bx(harm.id)) * scale;
+        const y = cy - (s.q - by(harm.id)) * scale;
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fill();
       });
       ctx.restore();
     };
@@ -147,30 +128,27 @@ function drawGrid(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
-  half: number,
-  extent: number,
+  radius: number,
+  peak: number,
 ) {
   ctx.globalAlpha = 1;
   ctx.lineWidth = 1;
-  // concentric range rings (quarter / half / full extent)
   ctx.strokeStyle = "#1b2330";
   for (const frac of [0.25, 0.5, 0.75, 1]) {
     ctx.beginPath();
-    ctx.arc(cx, cy, half * 0.92 * frac, 0, Math.PI * 2);
+    ctx.arc(cx, cy, radius * frac, 0, Math.PI * 2);
     ctx.stroke();
   }
-  // axes
   ctx.strokeStyle = "#2a3342";
   ctx.beginPath();
-  ctx.moveTo(cx - half * 0.92, cy);
-  ctx.lineTo(cx + half * 0.92, cy);
-  ctx.moveTo(cx, cy - half * 0.92);
-  ctx.lineTo(cx, cy + half * 0.92);
+  ctx.moveTo(cx - radius, cy);
+  ctx.lineTo(cx + radius, cy);
+  ctx.moveTo(cx, cy - radius);
+  ctx.lineTo(cx, cy + radius);
   ctx.stroke();
-  // extent label
   ctx.fillStyle = "#8b98a9";
   ctx.font = "10px var(--font-geist-mono), monospace";
-  ctx.fillText(`±${Math.round(extent)} lsb`, cx + 4, cy - half * 0.92 + 12);
-  ctx.fillText("I →", cx + half * 0.92 - 22, cy - 4);
-  ctx.fillText("Q ↑", cx + 4, cy - half * 0.92 + 24);
+  ctx.fillText(`full-scale ${Math.round(peak)}`, cx + 4, cy - radius + 12);
+  ctx.fillText("I →", cx + radius - 22, cy - 4);
+  ctx.fillText("Q ↑", cx + 4, cy - radius + 24);
 }

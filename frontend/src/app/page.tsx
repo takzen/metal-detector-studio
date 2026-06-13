@@ -56,6 +56,19 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
   );
 }
 
+function RawUnavailable() {
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-center">
+      <p className="text-sm text-muted">No raw ADC stream from this source.</p>
+      <p className="max-w-md text-xs text-muted">
+        This device (e.g. TAKTYK / URD-1) sends only the processed I/Q feature vector — no raw
+        samples — so the oscilloscope and FFT have nothing to plot. They work with the synthetic
+        source or a device that streams raw blocks (e.g. Spectral-G4).
+      </p>
+    </div>
+  );
+}
+
 export default function Home() {
   const t = useTelemetry();
   const { profile, feature, raw, stats } = t;
@@ -220,13 +233,15 @@ export default function Home() {
               </div>
             </div>
             <div className="h-[28rem] w-full">
-              {profile && (
+              {profile && raw ? (
                 <Scope
                   rawRef={t.rawRef}
                   sampleRateHz={profile.raw.sample_rate_hz}
                   blockSize={profile.raw.block_size}
                   fullscaleLsb={profile.raw.fullscale_lsb}
                 />
+              ) : (
+                <RawUnavailable />
               )}
             </div>
             <p className="mt-2 text-xs text-muted">x: time [ms] · y: ADC [lsb]</p>
@@ -237,13 +252,15 @@ export default function Home() {
           <Card>
             <h2 className="mb-3 text-sm font-medium text-muted">Live FFT — EMI scout</h2>
             <div className="h-[28rem] w-full">
-              {profile && (
+              {profile && raw ? (
                 <Spectrum
                   rawRef={t.rawRef}
                   sampleRateHz={profile.raw.sample_rate_hz}
                   blockSize={profile.raw.block_size}
                   fullscaleLsb={profile.raw.fullscale_lsb}
                 />
+              ) : (
+                <RawUnavailable />
               )}
             </div>
             <p className="mt-2 text-xs text-muted">
