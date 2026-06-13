@@ -355,7 +355,11 @@ export default function Home() {
                 <RawUnavailable />
               )}
             </div>
-            <p className="mt-2 text-xs text-muted">x: time [ms] · y: demod I/Q</p>
+            <div className="mt-2 flex items-center gap-3 text-xs text-muted">
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#3b82f6" }} />I</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#f59e0b" }} />Q</span>
+              <span>x: time [ms] · y: demod I/Q</span>
+            </div>
           </Card>
         )}
 
@@ -392,9 +396,11 @@ export default function Home() {
                 <RawUnavailable />
               )}
             </div>
-            <p className="mt-2 text-xs text-muted">
-              x: frequency [Hz] · y: |X| [dBFS] · Hann · dashed marker = peak
-            </p>
+            <div className="mt-2 flex items-center gap-3 text-xs text-muted">
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#3b82f6" }} />I</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#f59e0b" }} />Q</span>
+              <span>x: frequency [Hz] · y: |X| [dBFS] · Hann · dashed = peak</span>
+            </div>
           </Card>
         )}
 

@@ -116,14 +116,16 @@ export function Recorder({
       af = requestAnimationFrame(tick);
     };
 
-    const ro = new ResizeObserver((entries) => {
-      const cr = entries[0].contentRect;
-      const w = Math.max(1, Math.round(cr.width));
-      const h = Math.max(1, Math.round(cr.height));
+    const ensure = () => {
+      const r = host.getBoundingClientRect();
+      const w = Math.max(1, Math.round(r.width));
+      const h = Math.max(1, Math.round(r.height));
       if (w <= 1 || h <= 1) return;
       if (!u) create(w, h);
       else u.setSize({ width: w, height: h });
-    });
+    };
+    ensure();
+    const ro = new ResizeObserver(ensure);
     ro.observe(host);
 
     return () => {
