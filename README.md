@@ -28,18 +28,19 @@ rewriting the PC software.
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
 flowchart TD
-    A["Microcontroller<br>(STM32 / ATxmega)"] -->|"USB-CDC / USART"| B
+    A["Microcontroller<br>(STM32G4 / ATxmega)"] -->|"USB-CDC / USART"| B
     S["Synthetic source<br>(bench, no hardware)"] -->|"same contract"| B
-    B["Python Backend<br>(FastAPI · WebSocket · profiles · MCP*)"] -->|"WebSocket telemetry / config"| C["Next.js Frontend<br>(React · Tailwind · uPlot)"]
+    B["Python Backend<br>(FastAPI · WebSocket · profiles)"] -->|"WebSocket telemetry / config"| C["Next.js Frontend<br>(React · Tailwind · uPlot)"]
+    B -->|"WebSocket"| M["MCP server<br>(stdio)"] -->|"tools"| D["AI agent<br>(Claude, …)"]
 
     style A fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
     style S fill:#1a1a1a,stroke:#10b981,stroke-width:2px,color:#ffffff
     style B fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
     style C fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
+    style M fill:#1a1a1a,stroke:#a855f7,stroke-width:2px,color:#ffffff
+    style D fill:#1a1a1a,stroke:#a855f7,stroke-width:2px,color:#ffffff
     linkStyle default stroke:#9ca3af,stroke-width:1px
 ```
-
-\* The MCP server is a standalone stdio process that consumes the same WebSocket stream.
 
 ## Features
 
@@ -50,10 +51,11 @@ flowchart TD
 - **Dynamic, profile-driven mapping:** a device-agnostic JSON contract
   (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
   firmware without PC rewrites.
-- **Bi-directional Control:** send configuration back to the device (gain, mode,
-  frequency, …). Mirrored by the synthetic source for bench testing.
-- **AI-Agent Ready (Anthropic MCP):** planned MCP server exposing live telemetry as
-  tools for coding assistants.
+- **Bi-directional Control:** send configuration (gain, mode, noise, target, …) to the
+  active source. Fully wired for the synthetic source; over serial it depends on the
+  firmware accepting inbound commands.
+- **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
+  coding assistants (read frames, analyze phase/spectrum, push config).
 
 ## Status
 
@@ -64,8 +66,7 @@ contract.
 | --- | --- |
 | Telemetry contract (`schema.json` + profiles) | ✅ |
 | Backend: FastAPI + WebSocket + synthetic source + config | ✅ |
-| Frontend: dashboard, XY hodograph, virtual oscilloscope | ✅ |
-| Frontend: live FFT + config panel | ✅ |
+| Frontend: tabbed dashboard (hodograph / oscilloscope / FFT / control) | ✅ |
 | MCP server (telemetry as AI tools) | ✅ |
 | Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
 | Config back to MCU over serial | 🚧 needs firmware command input |
@@ -77,7 +78,7 @@ Roadmap and task breakdown live in `TASKS.md`.
 - **Frontend:** Next.js 16 (React 19), Tailwind CSS v4, [uPlot](https://github.com/leeoniya/uplot)
   for high-frequency time-series rendering. Package manager: **pnpm**.
 - **Backend:** Python ≥ 3.13 managed with [uv](https://docs.astral.sh/uv/), FastAPI,
-  `websockets`, NumPy, `pyserial-asyncio` (for the upcoming serial transport).
+  `websockets`, NumPy, `pyserial-asyncio` (serial transport), `mcp` (MCP server).
 - **Hardware compatibility:** any MCU streaming the telemetry contract over USART / USB-CDC.
 
 ## Project Structure
@@ -86,20 +87,21 @@ Roadmap and task breakdown live in `TASKS.md`.
 ├── assets/                # screenshots / media
 ├── backend/               # Python / FastAPI server + telemetry sources
 │   ├── main.py            # entry point (uvicorn)
+│   ├── mcp_server.py      # standalone stdio MCP server (telemetry as AI tools)
 │   ├── schema.json        # device-agnostic packet grammar
 │   ├── profiles/          # device profiles (spectral_g4.json, urd1.json, …)
 │   ├── app/
 │   │   ├── profiles.py    # profile + schema loader/validation
 │   │   ├── config.py      # env-overridable settings
 │   │   ├── telemetry/     # pydantic models (the contract in code)
-│   │   ├── sources/       # synthetic source (+ serial, planned)
+│   │   ├── sources/       # synthetic + serial (USB-CDC) sources
 │   │   └── server/        # FastAPI app + WebSocket broadcast hub
-│   └── scripts/ws_client.py  # WebSocket smoke-test client
+│   └── scripts/           # ws_client.py (smoke test), serial_sniff.py (port recon)
 └── frontend/              # Next.js app
     └── src/
-        ├── app/           # dashboard page + layout
-        ├── components/    # Hodograph, Scope (charts)
-        └── lib/           # telemetry types + WebSocket hook
+        ├── app/           # tabbed dashboard page + layout
+        ├── components/    # Hodograph, Scope, Spectrum, ControlPanel
+        └── lib/           # telemetry types, WebSocket hook, FFT
 ```
 
 ## Getting Started
@@ -107,7 +109,7 @@ Roadmap and task breakdown live in `TASKS.md`.
 ### Prerequisites
 
 - Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/)
-- Node.js ≥ 18 and [pnpm](https://pnpm.io/)
+- Node.js ≥ 20 and [pnpm](https://pnpm.io/)
 - (Optional) a detector MCU configured for USB-CDC telemetry — not required for bench work.
 
 ### 1. Backend
