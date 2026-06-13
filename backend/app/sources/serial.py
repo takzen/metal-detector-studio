@@ -151,10 +151,10 @@ class SerialSource(TelemetrySource):
             stop.set()
 
     def _feature(self, seq: int, f: dict[str, float]) -> FeatureFrame:
-        # Prefer the device's ground-tracked delta (OX/OY) for the hodograph;
-        # fall back to raw X/Y if the firmware doesn't send it.
-        i = f.get("OX", f["X"])
-        q = f.get("OY", f["Y"])
+        # Prefer the device's ENTER-zeroed delta (DX/DY) for the hodograph so it zeroes
+        # together with the device; fall back to OX/OY, then raw X/Y.
+        i = f.get("DX", f.get("OX", f["X"]))
+        q = f.get("DY", f.get("OY", f["Y"]))
         harmonics = {
             self._hid: HarmonicSample(mag=math.hypot(i, q), phase=math.atan2(q, i), i=i, q=q)
         }

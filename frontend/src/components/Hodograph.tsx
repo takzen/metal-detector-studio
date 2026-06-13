@@ -10,6 +10,7 @@ import type { FeatureFrame, Harmonic } from "@/lib/types";
 // doesn't jump/zoom into noise between passes. The "zero" button applies a manual offset.
 const PEAK_RISE = 0.08; // scale grows toward larger signals
 const PEAK_FALL = 0.01; // ...and shrinks slowly (stable, no jitter)
+const NOISE_FLOOR_K = 10; // idle floor = K x noise level -> noise stays a small dot
 const ABS_FLOOR = 1; // never divide by ~0
 
 export function Hodograph({
@@ -23,6 +24,7 @@ export function Hodograph({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const peakRef = useRef(1);
+  const noiseRef = useRef(1); // slow estimate of the idle/noise magnitude
   const zeroRef = useRef<Map<string, { i: number; q: number }>>(new Map()); // manual offset
   const dispRef = useRef<Map<string, { i: number; q: number }>>(new Map()); // eased tip
   const lastSeqRef = useRef(-1);
@@ -95,7 +97,11 @@ export function Hodograph({
         }
         const a = frameMag > peakRef.current ? PEAK_RISE : PEAK_FALL;
         peakRef.current += a * (frameMag - peakRef.current);
-        if (peakRef.current < ABS_FLOOR) peakRef.current = ABS_FLOOR;
+        // slow noise/idle estimate (brief targets contribute little); floor the scale
+        // at K x noise so idle noise stays a small dot instead of filling the plot.
+        noiseRef.current += 0.01 * (frameMag - noiseRef.current);
+        const floor = Math.max(ABS_FLOOR, NOISE_FLOOR_K * noiseRef.current);
+        if (peakRef.current < floor) peakRef.current = floor;
       }
 
       const peak = peakRef.current;
