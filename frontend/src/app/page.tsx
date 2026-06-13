@@ -1,6 +1,7 @@
 "use client";
 
 import { Hodograph } from "@/components/Hodograph";
+import { Scope } from "@/components/Scope";
 import { colorFor } from "@/lib/palette";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 
@@ -151,20 +152,35 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Raw block */}
+      {/* Virtual oscilloscope (raw block) */}
       <section className="mt-6">
         <div className="rounded-lg border border-border bg-panel p-4">
-          <h2 className="text-sm font-medium text-muted mb-3">Raw RX block (scope / FFT source)</h2>
-          <div className="flex flex-wrap gap-6">
-            <Stat label="seq" value={raw ? String(raw.seq) : "—"} />
-            <Stat
-              label="sample rate"
-              value={raw ? `${(raw.sample_rate_hz / 1000).toFixed(0)} kHz` : "—"}
-            />
-            <Stat label="block" value={raw ? `${raw.samples.length} samp` : "—"} />
-            <Stat label="min" value={rawStats ? String(rawStats.min) : "—"} />
-            <Stat label="max" value={rawStats ? String(rawStats.max) : "—"} />
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-muted">
+              Virtual oscilloscope — raw RX block
+            </h2>
+            <div className="flex flex-wrap gap-6">
+              <Stat label="seq" value={raw ? String(raw.seq) : "—"} />
+              <Stat
+                label="sample rate"
+                value={raw ? `${(raw.sample_rate_hz / 1000).toFixed(0)} kHz` : "—"}
+              />
+              <Stat label="block" value={raw ? `${raw.samples.length} samp` : "—"} />
+              <Stat label="min" value={rawStats ? String(rawStats.min) : "—"} />
+              <Stat label="max" value={rawStats ? String(rawStats.max) : "—"} />
+            </div>
           </div>
+          <div className="h-64 w-full">
+            {profile && (
+              <Scope
+                rawRef={t.rawRef}
+                sampleRateHz={profile.raw.sample_rate_hz}
+                blockSize={profile.raw.block_size}
+                fullscaleLsb={profile.raw.fullscale_lsb}
+              />
+            )}
+          </div>
+          <p className="mt-2 text-xs text-muted">x: time [ms] · y: ADC [lsb]</p>
         </div>
       </section>
 
