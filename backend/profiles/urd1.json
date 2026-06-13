@@ -7,7 +7,7 @@
     "transport": "usb-cdc"
   },
   "harmonics": [
-    { "id": "f1", "index": 1, "freq_hz": 14000.0 }
+    { "id": "f1", "index": 1, "freq_hz": 13888.9 }
   ],
   "phase_diffs": [],
   "extras": ["gb_residual"],
