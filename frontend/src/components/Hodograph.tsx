@@ -15,15 +15,23 @@ const ABS_FLOOR = 1e-6;
 export function Hodograph({
   trailRef,
   harmonics,
+  zeroSignal = 0,
 }: {
   trailRef: React.RefObject<FeatureFrame[]>;
   harmonics: Harmonic[];
+  zeroSignal?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const peakRef = useRef(1);
   const baselineRef = useRef<Map<string, { i: number; q: number }>>(new Map());
   const dispRef = useRef<Map<string, { i: number; q: number }>>(new Map());
   const lastSeqRef = useRef(-1);
+  const zeroPendingRef = useRef(true);
+
+  // request a baseline snap (instant zero) whenever the parent bumps zeroSignal
+  useEffect(() => {
+    zeroPendingRef.current = true;
+  }, [zeroSignal]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -62,6 +70,18 @@ export function Hodograph({
       const base = baselineRef.current;
 
       const latest = trail[trail.length - 1];
+
+      // --- instant zero: snap the baseline to the current sample ---
+      if (zeroPendingRef.current && latest) {
+        zeroPendingRef.current = false;
+        for (const harm of harmonics) {
+          const s = latest.harmonics[harm.id];
+          if (!s) continue;
+          base.set(harm.id, { i: s.i, q: s.q });
+          dispRef.current.set(harm.id, { i: 0, q: 0 });
+        }
+        peakRef.current = ABS_FLOOR;
+      }
 
       // --- once per new frame: track ground + update decaying peak ---
       if (latest && latest.seq !== lastSeqRef.current) {

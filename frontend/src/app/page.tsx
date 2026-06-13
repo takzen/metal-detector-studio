@@ -73,6 +73,7 @@ export default function Home() {
   const t = useTelemetry();
   const { profile, feature, raw, stats } = t;
   const [tab, setTab] = useState<TabId>("hodograph");
+  const [zeroNonce, setZeroNonce] = useState(0);
 
   const rawStats = raw
     ? (() => {
@@ -139,7 +140,14 @@ export default function Home() {
                 <h2 className="text-sm font-medium text-muted">
                   XY hodograph — delta vs ground
                 </h2>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={() => setZeroNonce((n) => n + 1)}
+                    title="zero now: snap the centre to the current vector"
+                    className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:text-foreground"
+                  >
+                    zero
+                  </button>
                   {profile?.harmonics.map((h, i) => (
                     <span key={h.id} className="inline-flex items-center gap-1.5 text-xs">
                       <span
@@ -152,7 +160,13 @@ export default function Home() {
                 </div>
               </div>
               <div className="relative aspect-square w-full">
-                {profile && <Hodograph trailRef={t.trailRef} harmonics={profile.harmonics} />}
+                {profile && (
+                  <Hodograph
+                    trailRef={t.trailRef}
+                    harmonics={profile.harmonics}
+                    zeroSignal={zeroNonce}
+                  />
+                )}
               </div>
             </Card>
 
