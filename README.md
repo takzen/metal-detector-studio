@@ -3,8 +3,8 @@
 A real-time signal diagnostics, analysis, and visualization suite for custom metal
 detector development (VLF / Pulse Induction). It connects to the detector's
 microcontroller over **USB-CDC / USART**, streams per-harmonic I/Q telemetry and raw
-ADC blocks, and renders them as a vector hodograph, virtual oscilloscope, and live FFT
-for ground-balance and discrimination tuning.
+ADC blocks, and renders them as a vector hodograph, virtual oscilloscope, live FFT, and
+a DSP/SAT analyzer for ground-balance and discrimination tuning.
 
 It is a **universal bench lab**: the detector under test is described by a JSON
 **device profile**, so the same studio drives different firmwares without code changes.
@@ -44,13 +44,23 @@ flowchart TD
 
 ## Features
 
-- **Vector & Phase-Shift Analysis (XY hodograph):** live I/Q vector trail per harmonic
-  for target discrimination and ground-balance alignment.
-- **Virtual Oscilloscope:** real-time time-domain plot of the raw ADC receiver block.
-- **Live FFT (Spectrum Analyzer):** environmental EMI monitoring to tune frequencies.
+- **Vector & Phase-Shift Analysis (XY hodograph):** live I/Q vector trail per harmonic,
+  drawn as **delta vs ground** (SERVICE2-style) with a signed ±180° protractor (0° at
+  left/ferrite), a large smoothed phase readout, and keyboard/one-click zero — for target
+  discrimination and ground-balance alignment.
+- **Virtual Oscilloscope:** real-time time-domain plot with timebase (50 ms–2 s),
+  auto/manual vertical scale, and run/hold. Shows the raw ADC RX block where available, or
+  the demodulated I/Q channels for devices that only stream processed vectors (e.g. TAKTYK).
+- **Live FFT (Spectrum Analyzer):** Hann-windowed dBFS spectrum with selectable frequency
+  span and a peak marker — environmental EMI monitoring to pick clean working bands.
+- **DSP / SAT Analyzer:** a multi-channel strip-chart recorder (audio vs SAT threshold,
+  ground, VDI, I/Q) to study self-adjusting-threshold behaviour and live filter response,
+  plus a theoretical **filter lab** (EMA / band-pass impulse + frequency response, −3 dB
+  estimate) mirroring the firmware DSP.
 - **Dynamic, profile-driven mapping:** a device-agnostic JSON contract
   (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
-  firmware without PC rewrites.
+  firmware without PC rewrites. Source, profile, and serial port are switchable live from
+  the header (no backend restart).
 - **Bi-directional Control:** send configuration (gain, mode, noise, target, …) to the
   active source. Fully wired for the synthetic source; over serial it depends on the
   firmware accepting inbound commands.
@@ -66,7 +76,8 @@ contract.
 | --- | --- |
 | Telemetry contract (`schema.json` + profiles) | ✅ |
 | Backend: FastAPI + WebSocket + synthetic source + config | ✅ |
-| Frontend: tabbed dashboard (hodograph / oscilloscope / FFT / control) | ✅ |
+| Frontend: dashboard (hodograph · oscilloscope · FFT · DSP/SAT · control) | ✅ |
+| Live source/profile/port switching from the UI | ✅ |
 | MCP server (telemetry as AI tools) | ✅ |
 | Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
 | Config back to MCU over serial | 🚧 needs firmware command input |
@@ -100,8 +111,10 @@ Roadmap and task breakdown live in `TASKS.md`.
 └── frontend/              # Next.js app
     └── src/
         ├── app/           # tabbed dashboard page + layout
-        ├── components/    # Hodograph, Scope, Spectrum, ControlPanel
-        └── lib/           # telemetry types, WebSocket hook, FFT
+        ├── components/    # Hodograph, IQScope/IQSpectrum (demod I/Q), Scope/Spectrum
+        │                  #   (raw RX), Recorder + FilterLab (DSP/SAT), ControlPanel,
+        │                  #   SourceControls
+        └── lib/           # telemetry types, WebSocket hook, FFT, palette, REST client
 ```
 
 ## Getting Started
