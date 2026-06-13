@@ -94,7 +94,9 @@ export function IQScope({
         if (Math.abs(b) > peak) peak = Math.abs(b);
       }
       if (yRef.current === "auto") peakRef.current += 0.1 * (peak * 1.1 - peakRef.current);
-      u.setData([xs, iSeg, qSeg], false);
+      // resetScales=true (default) so uPlot calls commit() → repaints AND re-evaluates
+      // our x/y range fns each frame. setData(data, false) skips commit() = no redraw.
+      u.setData([xs, iSeg, qSeg]);
     };
     af = requestAnimationFrame(tick);
 

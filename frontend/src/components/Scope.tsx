@@ -79,7 +79,8 @@ export function Scope({
       lastSeq = raw.seq;
       const n = raw.samples.length;
       if (xs.length !== n) xs = buildXs(n, raw.sample_rate_hz);
-      u.setData([xs, raw.samples], false);
+      // resetScales=true (default) so uPlot commits the redraw; passing false skips commit().
+      u.setData([xs, raw.samples]);
     };
     af = requestAnimationFrame(tick);
 

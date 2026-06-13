@@ -117,7 +117,8 @@ export function Recorder({
       loRef.current += 0.15 * (lo - pad - loRef.current);
       hiRef.current += 0.15 * (hi + pad - hiRef.current);
 
-      u.setData([xs, ...cols] as unknown as uPlot.AlignedData, false);
+      // resetScales=true (default) so uPlot commits the redraw; passing false skips commit().
+      u.setData([xs, ...cols] as unknown as uPlot.AlignedData);
     };
     af = requestAnimationFrame(tick);
 

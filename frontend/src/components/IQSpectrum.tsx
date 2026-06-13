@@ -108,10 +108,8 @@ export function IQSpectrum({
       let pi = 1;
       for (let k = 2; k < dbI.length; k++) if (dbI[k] > dbI[pi]) pi = k;
       peakRef.current = { f: freqs[pi], db: dbI[pi] };
-      u.setData(
-        [freqs as unknown as number[], dbI as unknown as number[], dbQ as unknown as number[]],
-        false,
-      );
+      // resetScales=true (default) so uPlot commits the redraw; passing false skips commit().
+      u.setData([freqs as unknown as number[], dbI as unknown as number[], dbQ as unknown as number[]]);
     };
     af = requestAnimationFrame(tick);
 

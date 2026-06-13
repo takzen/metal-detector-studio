@@ -88,7 +88,8 @@ export function Spectrum({
       }
       const db = new Float64Array(amp.length);
       for (let k = 0; k < amp.length; k++) db[k] = toDbfs(amp[k], fullscaleLsb);
-      u.setData([freqsKHz as unknown as number[], db as unknown as number[]], false);
+      // resetScales=true (default) so uPlot commits the redraw; passing false skips commit().
+      u.setData([freqsKHz as unknown as number[], db as unknown as number[]]);
     };
     af = requestAnimationFrame(tick);
 
