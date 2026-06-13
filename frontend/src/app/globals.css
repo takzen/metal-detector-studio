@@ -21,9 +21,10 @@
 }
 
 html {
-  /* Always reserve the scrollbar gutter so switching between tall/short tabs
-     doesn't shift the centered layout sideways. */
+  /* Keep the vertical scrollbar track always present so switching between
+     tall/short tabs never changes the viewport width (no sideways jump). */
   scrollbar-gutter: stable;
+  overflow-y: scroll;
 }
 
 body {
