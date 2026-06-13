@@ -3,16 +3,16 @@
 import { useEffect, useRef } from "react";
 import uPlot from "uplot";
 
-const BUF_MAX = 2000;
-
 export function IQScope({
   iRef,
   qRef,
   fsRef,
+  windowMs,
 }: {
   iRef: React.RefObject<number[]>;
   qRef: React.RefObject<number[]>;
   fsRef: React.RefObject<number>;
+  windowMs: number;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const peakRef = useRef(1);
@@ -26,7 +26,7 @@ export function IQScope({
       width: Math.max(1, Math.round(rect.width)),
       height: Math.max(1, Math.round(rect.height)),
       scales: {
-        x: { time: false, range: () => [0, (BUF_MAX / (fsRef.current || 1000)) * 1000] },
+        x: { time: false, range: () => [0, windowMs] },
         y: { range: () => [-peakRef.current, peakRef.current] },
       },
       axes: [
@@ -55,20 +55,26 @@ export function IQScope({
       af = requestAnimationFrame(tick);
       const ib = iRef.current;
       const qb = qRef.current;
-      const n = ib.length;
-      if (n < 2) return;
       const fs = fsRef.current || 1000;
+      const want = Math.max(2, Math.round((windowMs / 1000) * fs));
+      const n = Math.min(ib.length, want);
+      if (n < 2) return;
+      const start = ib.length - n;
       const xs = new Array<number>(n);
+      const iSeg = new Array<number>(n);
+      const qSeg = new Array<number>(n);
       let peak = 1;
       for (let k = 0; k < n; k++) {
-        xs[k] = (k / fs) * 1000;
-        const a = Math.abs(ib[k]);
-        const b = Math.abs(qb[k]);
-        if (a > peak) peak = a;
-        if (b > peak) peak = b;
+        xs[k] = (k / fs) * 1000; // 0 .. windowMs
+        const a = ib[start + k];
+        const b = qb[start + k];
+        iSeg[k] = a;
+        qSeg[k] = b;
+        if (Math.abs(a) > peak) peak = Math.abs(a);
+        if (Math.abs(b) > peak) peak = Math.abs(b);
       }
       peakRef.current = peakRef.current + 0.1 * (peak * 1.1 - peakRef.current);
-      u.setData([xs, ib.slice(), qb.slice()], false);
+      u.setData([xs, iSeg, qSeg], false);
     };
     af = requestAnimationFrame(tick);
 
@@ -77,7 +83,7 @@ export function IQScope({
       ro.disconnect();
       u.destroy();
     };
-  }, [iRef, qRef, fsRef]);
+  }, [iRef, qRef, fsRef, windowMs]);
 
   return <div ref={hostRef} className="h-full w-full" />;
 }

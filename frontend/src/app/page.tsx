@@ -76,6 +76,7 @@ export default function Home() {
   const { profile, feature, raw, stats } = t;
   const [tab, setTab] = useState<TabId>("hodograph");
   const [zeroNonce, setZeroNonce] = useState(0);
+  const [scopeMs, setScopeMs] = useState(500); // oscilloscope timebase (window)
 
   // Keyboard zero: Enter or Z (mirrors the detector's ENTER=zero), unless typing in a control.
   useEffect(() => {
@@ -89,18 +90,6 @@ export default function Home() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  const rawStats = raw
-    ? (() => {
-        let min = Infinity;
-        let max = -Infinity;
-        for (const s of raw.samples) {
-          if (s < min) min = s;
-          if (s > max) max = s;
-        }
-        return { min, max };
-      })()
-    : null;
 
   return (
     <main className="flex-1 w-full max-w-7xl mx-auto p-6">
@@ -265,21 +254,28 @@ export default function Home() {
 
         {tab === "scope" && (
           <Card>
-            <div className="mb-3 flex items-center justify-between gap-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
               <h2 className="text-sm font-medium text-muted">Virtual oscilloscope — raw RX</h2>
-              <div className="flex flex-wrap gap-4">
-                <Stat label="seq" value={raw ? String(raw.seq) : "—"} />
-                <Stat
-                  label="rate"
-                  value={raw ? `${(raw.sample_rate_hz / 1000).toFixed(0)} kHz` : "—"}
-                />
-                <Stat label="min" value={rawStats ? String(rawStats.min) : "—"} />
-                <Stat label="max" value={rawStats ? String(rawStats.max) : "—"} />
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] uppercase tracking-wide text-muted">timebase</span>
+                {[50, 100, 200, 500, 1000, 2000].map((ms) => (
+                  <button
+                    key={ms}
+                    onClick={() => setScopeMs(ms)}
+                    className={`rounded border px-2 py-0.5 text-xs tabular-nums transition-colors ${
+                      scopeMs === ms
+                        ? "border-accent text-foreground"
+                        : "border-border text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {ms < 1000 ? `${ms}ms` : `${ms / 1000}s`}
+                  </button>
+                ))}
               </div>
             </div>
             <div className="h-[28rem] w-full">
               {t.hasIq ? (
-                <IQScope iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} />
+                <IQScope iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} windowMs={scopeMs} />
               ) : profile && raw ? (
                 <Scope
                   rawRef={t.rawRef}
