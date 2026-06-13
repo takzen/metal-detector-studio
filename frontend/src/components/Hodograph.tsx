@@ -211,9 +211,11 @@ function drawGrid(
     ctx.stroke();
 
     if (major) {
+      // signed scale: top arc 0..+180 (left->top->right), bottom arc -180..0
+      const lbl = d <= 180 ? d : d - 360;
       ctx.fillStyle = "#8b98a9";
       ctx.font = "10px var(--font-geist-mono), monospace";
-      ctx.fillText(`${d}°`, cx + dirx * radius * 0.83, cy + diry * radius * 0.83);
+      ctx.fillText(`${lbl}°`, cx + dirx * radius * 0.83, cy + diry * radius * 0.83);
     }
   }
   ctx.textAlign = "start";

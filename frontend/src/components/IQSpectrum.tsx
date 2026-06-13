@@ -4,18 +4,25 @@ import { useEffect, useRef } from "react";
 import uPlot from "uplot";
 import { amplitudeSpectrum, binFreqs, pow2Floor } from "@/lib/fft";
 
-const DB_FLOOR = -80;
+const DB_FLOOR = -100;
 
 export function IQSpectrum({
   iRef,
   qRef,
   fsRef,
+  spanHz,
 }: {
   iRef: React.RefObject<number[]>;
   qRef: React.RefObject<number[]>;
   fsRef: React.RefObject<number>;
+  spanHz: number | "full";
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const spanRef = useRef<number | "full">(spanHz);
+  const peakRef = useRef<{ f: number; db: number } | null>(null);
+  useEffect(() => {
+    spanRef.current = spanHz;
+  });
 
   useEffect(() => {
     const host = hostRef.current;
@@ -26,12 +33,15 @@ export function IQSpectrum({
       width: Math.max(1, Math.round(rect.width)),
       height: Math.max(1, Math.round(rect.height)),
       scales: {
-        x: { time: false, range: () => [0, (fsRef.current || 1000) / 2 / 1000] },
+        x: {
+          time: false,
+          range: () => [0, spanRef.current === "full" ? (fsRef.current || 1000) / 2 : spanRef.current],
+        },
         y: { range: [DB_FLOOR, 0] },
       },
       axes: [
         { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 },
-          values: (_u, s) => s.map((v) => v.toFixed(2)) },
+          values: (_u, s) => s.map((v) => `${v.toFixed(0)}`) },
         { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 }, size: 52 },
       ],
       series: [
@@ -41,13 +51,40 @@ export function IQSpectrum({
       ],
       cursor: { y: false },
       legend: { show: true },
+      hooks: {
+        draw: [
+          (u) => {
+            const pk = peakRef.current;
+            if (!pk) return;
+            const ctx = u.ctx;
+            const x = u.valToPos(pk.f, "x", true);
+            const top = u.valToPos(0, "y", true);
+            const bot = u.valToPos(DB_FLOOR, "y", true);
+            ctx.save();
+            ctx.strokeStyle = "#10b981";
+            ctx.setLineDash([4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(x, top);
+            ctx.lineTo(x, bot);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = "#10b981";
+            ctx.font = "11px var(--font-geist-mono), monospace";
+            ctx.textAlign = x > (u.bbox.left + u.bbox.width / 2) ? "right" : "left";
+            ctx.fillText(`${pk.f.toFixed(0)} Hz  ${pk.db.toFixed(0)} dB`, x + (ctx.textAlign === "right" ? -6 : 6), top + 12);
+            ctx.restore();
+          },
+        ],
+      },
     };
     const u = new uPlot(opts, [[], [], []] as unknown as uPlot.AlignedData, host);
 
-    const ro = new ResizeObserver(() => {
+    const fitSize = () => {
       const r = host.getBoundingClientRect();
       u.setSize({ width: Math.max(1, Math.round(r.width)), height: Math.max(1, Math.round(r.height)) });
-    });
+    };
+    requestAnimationFrame(fitSize);
+    const ro = new ResizeObserver(fitSize);
     ro.observe(host);
 
     const toDb = (amp: Float64Array, ref: number) => {
@@ -64,15 +101,20 @@ export function IQSpectrum({
       const fs = fsRef.current || 1000;
       const n = pow2Floor(ib.length);
       if (n < 32) return;
-      const iSeg = ib.slice(ib.length - n);
-      const qSeg = qb.slice(qb.length - n);
-      const ai = amplitudeSpectrum(iSeg);
-      const aq = amplitudeSpectrum(qSeg);
-      const freqs = Float64Array.from(binFreqs(fs, n), (f) => f / 1000);
-      // reference ~ full-scale of the downscaled int16 signal
+      const ai = amplitudeSpectrum(ib.slice(ib.length - n));
+      const aq = amplitudeSpectrum(qb.slice(qb.length - n));
+      const freqs = binFreqs(fs, n); // Hz
       const ref = 32768;
+      const dbI = toDb(ai, ref);
+      const dbQ = toDb(aq, ref);
+
+      // peak marker (skip DC bin 0)
+      let pi = 1;
+      for (let k = 2; k < dbI.length; k++) if (dbI[k] > dbI[pi]) pi = k;
+      peakRef.current = { f: freqs[pi], db: dbI[pi] };
+
       u.setData(
-        [freqs as unknown as number[], toDb(ai, ref) as unknown as number[], toDb(aq, ref) as unknown as number[]],
+        [freqs as unknown as number[], dbI as unknown as number[], dbQ as unknown as number[]],
         false,
       );
     };

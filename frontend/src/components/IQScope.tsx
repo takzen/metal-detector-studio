@@ -8,14 +8,27 @@ export function IQScope({
   qRef,
   fsRef,
   windowMs,
+  running,
+  yScale,
 }: {
   iRef: React.RefObject<number[]>;
   qRef: React.RefObject<number[]>;
   fsRef: React.RefObject<number>;
   windowMs: number;
+  running: boolean;
+  yScale: number | "auto";
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const peakRef = useRef(1);
+  // live controls without recreating the chart
+  const winRef = useRef(windowMs);
+  const runRef = useRef(running);
+  const yRef = useRef<number | "auto">(yScale);
+  useEffect(() => {
+    winRef.current = windowMs;
+    runRef.current = running;
+    yRef.current = yScale;
+  });
 
   useEffect(() => {
     const host = hostRef.current;
@@ -26,8 +39,13 @@ export function IQScope({
       width: Math.max(1, Math.round(rect.width)),
       height: Math.max(1, Math.round(rect.height)),
       scales: {
-        x: { time: false, range: () => [0, windowMs] },
-        y: { range: () => [-peakRef.current, peakRef.current] },
+        x: { time: false, range: () => [0, winRef.current] },
+        y: {
+          range: () => {
+            const ys = yRef.current;
+            return ys === "auto" ? [-peakRef.current, peakRef.current] : [-ys, ys];
+          },
+        },
       },
       axes: [
         { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 },
@@ -44,19 +62,23 @@ export function IQScope({
     };
     const u = new uPlot(opts, [[], [], []] as unknown as uPlot.AlignedData, host);
 
-    const ro = new ResizeObserver(() => {
+    // size correctly once the tab/container is laid out (avoids "blank until click")
+    const fitSize = () => {
       const r = host.getBoundingClientRect();
       u.setSize({ width: Math.max(1, Math.round(r.width)), height: Math.max(1, Math.round(r.height)) });
-    });
+    };
+    requestAnimationFrame(fitSize);
+    const ro = new ResizeObserver(fitSize);
     ro.observe(host);
 
     let af = 0;
     const tick = () => {
       af = requestAnimationFrame(tick);
+      if (!runRef.current) return; // hold: keep last trace frozen
       const ib = iRef.current;
       const qb = qRef.current;
       const fs = fsRef.current || 1000;
-      const want = Math.max(2, Math.round((windowMs / 1000) * fs));
+      const want = Math.max(2, Math.round((winRef.current / 1000) * fs));
       const n = Math.min(ib.length, want);
       if (n < 2) return;
       const start = ib.length - n;
@@ -65,7 +87,7 @@ export function IQScope({
       const qSeg = new Array<number>(n);
       let peak = 1;
       for (let k = 0; k < n; k++) {
-        xs[k] = (k / fs) * 1000; // 0 .. windowMs
+        xs[k] = (k / fs) * 1000;
         const a = ib[start + k];
         const b = qb[start + k];
         iSeg[k] = a;
@@ -73,7 +95,9 @@ export function IQScope({
         if (Math.abs(a) > peak) peak = Math.abs(a);
         if (Math.abs(b) > peak) peak = Math.abs(b);
       }
-      peakRef.current = peakRef.current + 0.1 * (peak * 1.1 - peakRef.current);
+      if (yRef.current === "auto") {
+        peakRef.current += 0.1 * (peak * 1.1 - peakRef.current);
+      }
       u.setData([xs, iSeg, qSeg], false);
     };
     af = requestAnimationFrame(tick);
@@ -83,7 +107,7 @@ export function IQScope({
       ro.disconnect();
       u.destroy();
     };
-  }, [iRef, qRef, fsRef, windowMs]);
+  }, [iRef, qRef, fsRef]);
 
   return <div ref={hostRef} className="h-full w-full" />;
 }

@@ -77,6 +77,10 @@ export default function Home() {
   const [tab, setTab] = useState<TabId>("hodograph");
   const [zeroNonce, setZeroNonce] = useState(0);
   const [scopeMs, setScopeMs] = useState(500); // oscilloscope timebase (window)
+  const [scopeRun, setScopeRun] = useState(true); // run / hold
+  const [scopeYAuto, setScopeYAuto] = useState(true);
+  const [scopeYScale, setScopeYScale] = useState(8000); // manual vertical full-scale
+  const [fftSpan, setFftSpan] = useState<number | "full">("full"); // FFT frequency span [Hz]
 
   // Keyboard zero: Enter or Z (mirrors the detector's ENTER=zero), unless typing in a control.
   useEffect(() => {
@@ -175,7 +179,7 @@ export default function Home() {
                 <div className="pointer-events-none absolute left-3 top-2 flex flex-col gap-0.5">
                   {profile?.harmonics.map((h, i) => {
                     const s = feature?.harmonics[h.id];
-                    const deg = s ? (((Math.atan2(s.q, s.i) * DEG) % 360) + 360) % 360 : null;
+                    const deg = s ? Math.atan2(s.q, s.i) * DEG : null; // -180..+180
                     return (
                       <span
                         key={h.id}
@@ -254,28 +258,66 @@ export default function Home() {
 
         {tab === "scope" && (
           <Card>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-sm font-medium text-muted">Virtual oscilloscope — raw RX</h2>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] uppercase tracking-wide text-muted">timebase</span>
-                {[50, 100, 200, 500, 1000, 2000].map((ms) => (
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] uppercase tracking-wide text-muted">time</span>
+                  {[50, 100, 200, 500, 1000, 2000].map((ms) => (
+                    <button
+                      key={ms}
+                      onClick={() => setScopeMs(ms)}
+                      className={`rounded border px-1.5 py-0.5 text-xs tabular-nums transition-colors ${
+                        scopeMs === ms ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                      }`}
+                    >
+                      {ms < 1000 ? `${ms}m` : `${ms / 1000}s`}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] uppercase tracking-wide text-muted">V</span>
                   <button
-                    key={ms}
-                    onClick={() => setScopeMs(ms)}
-                    className={`rounded border px-2 py-0.5 text-xs tabular-nums transition-colors ${
-                      scopeMs === ms
-                        ? "border-accent text-foreground"
-                        : "border-border text-muted hover:text-foreground"
+                    onClick={() => setScopeYAuto((v) => !v)}
+                    className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
+                      scopeYAuto ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
                     }`}
                   >
-                    {ms < 1000 ? `${ms}ms` : `${ms / 1000}s`}
+                    auto
                   </button>
-                ))}
+                  <button
+                    onClick={() => { setScopeYAuto(false); setScopeYScale((s) => Math.max(50, Math.round(s / 2))); }}
+                    className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
+                  >
+                    +
+                  </button>
+                  <button
+                    onClick={() => { setScopeYAuto(false); setScopeYScale((s) => Math.min(2_000_000, s * 2)); }}
+                    className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
+                  >
+                    −
+                  </button>
+                </div>
+                <button
+                  onClick={() => setScopeRun((v) => !v)}
+                  className={`rounded border px-2 py-0.5 text-xs transition-colors ${
+                    scopeRun ? "border-border text-muted hover:text-foreground" : "border-amber-500 text-amber-400"
+                  }`}
+                >
+                  {scopeRun ? "⏸ hold" : "▶ run"}
+                </button>
               </div>
             </div>
             <div className="h-[28rem] w-full">
               {t.hasIq ? (
-                <IQScope iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} windowMs={scopeMs} />
+                <IQScope
+                  iRef={t.iqIRef}
+                  qRef={t.iqQRef}
+                  fsRef={t.iqFsRef}
+                  windowMs={scopeMs}
+                  running={scopeRun}
+                  yScale={scopeYAuto ? "auto" : scopeYScale}
+                />
               ) : profile && raw ? (
                 <Scope
                   rawRef={t.rawRef}
@@ -293,10 +335,26 @@ export default function Home() {
 
         {tab === "fft" && (
           <Card>
-            <h2 className="mb-3 text-sm font-medium text-muted">Live FFT — EMI scout</h2>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-medium text-muted">Live FFT — EMI scout</h2>
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] uppercase tracking-wide text-muted">span</span>
+                {([50, 100, 200, "full"] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setFftSpan(s)}
+                    className={`rounded border px-1.5 py-0.5 text-xs tabular-nums transition-colors ${
+                      fftSpan === s ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {s === "full" ? "full" : `${s}Hz`}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="h-[28rem] w-full">
               {t.hasIq ? (
-                <IQSpectrum iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} />
+                <IQSpectrum iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} spanHz={fftSpan} />
               ) : profile && raw ? (
                 <Spectrum
                   rawRef={t.rawRef}
@@ -309,7 +367,7 @@ export default function Home() {
               )}
             </div>
             <p className="mt-2 text-xs text-muted">
-              x: frequency [kHz] · y: |X| [dBFS] · Hann window
+              x: frequency [Hz] · y: |X| [dBFS] · Hann · dashed marker = peak
             </p>
           </Card>
         )}
