@@ -1,0 +1,80 @@
+{
+  "id": "spectral_g4",
+  "title": "Spectral-G4 — multi-frequency VLF (3 harmonics)",
+  "device": {
+    "target": "Spectral-G4",
+    "mcu": "STM32G474",
+    "probe": "STM32G071",
+    "transport": "usb-cdc"
+  },
+  "harmonics": [
+    { "id": "f1", "index": 1, "freq_hz": 7812.5 },
+    { "id": "f2", "index": 3, "freq_hz": 23437.5 },
+    { "id": "f3", "index": 5, "freq_hz": 39062.5 }
+  ],
+  "phase_diffs": [
+    { "name": "dphase31", "from": "f2", "to": "f1", "description": "harmonic 3 vs 1: wrap(phase(f2) - phase(f1))" },
+    { "name": "dphase51", "from": "f3", "to": "f1", "description": "harmonic 5 vs 1: wrap(phase(f3) - phase(f1))" }
+  ],
+  "extras": ["gb_residual", "temp_c"],
+  "raw": {
+    "sample_rate_hz": 250000,
+    "block_size": 1024,
+    "dtype": "int16",
+    "adc_bits": 12,
+    "adc_vref": 3.3,
+    "fullscale_lsb": 2047
+  },
+  "stream": { "feature_hz": 60, "raw_hz": 12 },
+  "config_keys": ["gain", "freq", "mode", "noise", "sweep_period", "paused", "target"],
+  "synth": {
+    "comment": "Parameters for the synthetic source (vlf_sim equivalent). Phases in degrees for readability; the source converts to rad.",
+    "sweep_period_s": 3.0,
+    "target_dwell_s": 0.45,
+    "noise_lsb": 12.0,
+    "ground": {
+      "f1": { "mag": 900.0, "phase_deg": 92.0 },
+      "f2": { "mag": 520.0, "phase_deg": 88.0 },
+      "f3": { "mag": 300.0, "phase_deg": 84.0 }
+    },
+    "ground_drift_lsb": 25.0,
+    "targets": [
+      {
+        "name": "iron_nail",
+        "strength": 1.0,
+        "response": {
+          "f1": { "amp": 700.0, "phase_deg": -35.0 },
+          "f2": { "amp": 760.0, "phase_deg": -28.0 },
+          "f3": { "amp": 820.0, "phase_deg": -22.0 }
+        }
+      },
+      {
+        "name": "foil",
+        "strength": 0.7,
+        "response": {
+          "f1": { "amp": 300.0, "phase_deg": 20.0 },
+          "f2": { "amp": 420.0, "phase_deg": 35.0 },
+          "f3": { "amp": 560.0, "phase_deg": 52.0 }
+        }
+      },
+      {
+        "name": "coin_cu",
+        "strength": 1.1,
+        "response": {
+          "f1": { "amp": 950.0, "phase_deg": 62.0 },
+          "f2": { "amp": 880.0, "phase_deg": 48.0 },
+          "f3": { "amp": 760.0, "phase_deg": 33.0 }
+        }
+      },
+      {
+        "name": "gold_small",
+        "strength": 0.5,
+        "response": {
+          "f1": { "amp": 180.0, "phase_deg": 40.0 },
+          "f2": { "amp": 260.0, "phase_deg": 30.0 },
+          "f3": { "amp": 340.0, "phase_deg": 18.0 }
+        }
+      }
+    ]
+  }
+}

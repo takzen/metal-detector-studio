@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Metal Detector Studio — telemetry grammar",
+  "description": "Device-AGNOSTIC packet grammar for the bench lab. It defines packet types and generic field shapes only; concrete devices (number of harmonics, phase-diff names, raw ADC params, synth model) live in profiles/*.json. A generic mapper routes packets using these descriptors, so adding a new detector firmware means adding a profile, not rewriting the PC software.",
+  "transport": {
+    "framing": "ndjson",
+    "comment": "One JSON object per line over USB-CDC / WebSocket. 'type' selects the packet; an active profile (see profiles/*.json) gives the concrete field layout."
+  },
+  "packets": {
+    "hello": {
+      "direction": "device->pc",
+      "description": "Sent once on connect. Binds the PC to the active device profile.",
+      "fields": {
+        "type": { "type": "string", "const": "hello" },
+        "schema_version": { "type": "string" },
+        "profile": { "type": "object", "description": "the active device profile (see profiles/*.json)" }
+      }
+    },
+    "feature": {
+      "direction": "device->pc",
+      "description": "Per-harmonic feature frame driven by the profile. Harmonics and phase diffs are keyed maps, so single-freq (1 harmonic) and multi-freq (N harmonics) devices share one packet shape.",
+      "fields": {
+        "type": { "type": "string", "const": "feature" },
+        "seq": { "type": "uint32", "description": "monotonic frame counter" },
+        "t": { "type": "float", "unit": "s", "description": "device timestamp" },
+        "harmonics": {
+          "type": "map<string, harmonic_sample>",
+          "description": "keyed by profile harmonic id (e.g. f1, f2, f3)"
+        },
+        "phase_diffs": {
+          "type": "map<string, float>",
+          "unit": "rad",
+          "description": "keyed by profile phase-diff name (e.g. dphase31, dphase51); empty for single-freq devices"
+        },
+        "extras": {
+          "type": "map<string, float>",
+          "description": "optional scalars declared by the profile (e.g. gb_residual, temp_c)"
+        }
+      },
+      "types": {
+        "harmonic_sample": {
+          "mag": { "type": "float", "unit": "lsb" },
+          "phase": { "type": "float", "unit": "rad" },
+          "i": { "type": "float", "unit": "lsb", "description": "in-phase; i = mag*cos(phase)" },
+          "q": { "type": "float", "unit": "lsb", "description": "quadrature; q = mag*sin(phase)" }
+        }
+      }
+    },
+    "raw": {
+      "direction": "device->pc",
+      "description": "Raw RX ADC block for the virtual scope and live FFT. 'samples' length == profile.raw.block_size.",
+      "fields": {
+        "type": { "type": "string", "const": "raw" },
+        "seq": { "type": "uint32" },
+        "t": { "type": "float", "unit": "s" },
+        "sample_rate_hz": { "type": "uint32", "unit": "Hz" },
+        "samples": { "type": "array<int16>" }
+      }
+    },
+    "config": {
+      "direction": "pc->device",
+      "description": "Configuration command back to the device (and to the synthetic source). Allowed keys come from the active profile.",
+      "fields": {
+        "type": { "type": "string", "const": "config" },
+        "key": { "type": "string" },
+        "value": { "type": "any" }
+      }
+    },
+    "config_ack": {
+      "direction": "device->pc",
+      "description": "Acknowledgement of a config command.",
+      "fields": {
+        "type": { "type": "string", "const": "config_ack" },
+        "key": { "type": "string" },
+        "value": { "type": "any" },
+        "ok": { "type": "bool" },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}

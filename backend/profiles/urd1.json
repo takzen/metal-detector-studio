@@ -1,0 +1,46 @@
+{
+  "id": "urd1",
+  "title": "URD-1 / TAKTYK — single-frequency VLF (1 harmonic)",
+  "device": {
+    "target": "URD-1",
+    "mcu": "ATxmega",
+    "transport": "usb-cdc"
+  },
+  "harmonics": [
+    { "id": "f1", "index": 1, "freq_hz": 14000.0 }
+  ],
+  "phase_diffs": [],
+  "extras": ["gb_residual"],
+  "raw": {
+    "sample_rate_hz": 100000,
+    "block_size": 1024,
+    "dtype": "int16",
+    "adc_bits": 12,
+    "adc_vref": 3.3,
+    "fullscale_lsb": 2047
+  },
+  "stream": { "feature_hz": 50, "raw_hz": 10 },
+  "config_keys": ["gain", "mode", "noise", "sweep_period", "paused", "target"],
+  "synth": {
+    "comment": "Single-frequency demo profile — proves the lab is device-agnostic (one harmonic, no phase diffs).",
+    "sweep_period_s": 3.0,
+    "target_dwell_s": 0.45,
+    "noise_lsb": 15.0,
+    "ground": {
+      "f1": { "mag": 800.0, "phase_deg": 90.0 }
+    },
+    "ground_drift_lsb": 30.0,
+    "targets": [
+      {
+        "name": "iron",
+        "strength": 1.0,
+        "response": { "f1": { "amp": 650.0, "phase_deg": -30.0 } }
+      },
+      {
+        "name": "coin",
+        "strength": 1.0,
+        "response": { "f1": { "amp": 700.0, "phase_deg": 55.0 } }
+      }
+    ]
+  }
+}
