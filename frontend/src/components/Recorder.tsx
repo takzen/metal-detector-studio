@@ -110,7 +110,7 @@ export function Recorder({
           ...channels.map((c) => ({ label: c.label, stroke: c.color, width: 1, points: { show: false } })),
         ],
         cursor: { y: false },
-        legend: { show: true },
+        legend: { show: false }, // channel toggle buttons act as the legend
       };
       u = new uPlot(opts, [[], ...channels.map(() => [])] as unknown as uPlot.AlignedData, host);
       af = requestAnimationFrame(tick);

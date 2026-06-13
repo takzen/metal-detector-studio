@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ControlPanel } from "@/components/ControlPanel";
+import { FilterLab } from "@/components/FilterLab";
 import { Hodograph } from "@/components/Hodograph";
 import { IQScope } from "@/components/IQScope";
 import { IQSpectrum } from "@/components/IQSpectrum";
@@ -85,6 +86,7 @@ export default function Home() {
   const [fftSpan, setFftSpan] = useState<number | "full">("full"); // FFT frequency span [Hz]
   const [recMs, setRecMs] = useState(2000); // DSP recorder window
   const [recActive, setRecActive] = useState<Set<string>>(new Set(["audio", "threshold"]));
+  const [dspMode, setDspMode] = useState<"live" | "theory">("live");
 
   const recChannels = useMemo<RecChannel[]>(
     () => [
@@ -399,55 +401,73 @@ export default function Home() {
         {tab === "dsp" && (
           <Card>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-medium text-muted">
-                DSP recorder — SAT (signal vs threshold) &amp; filter/impulse response
-              </h2>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex flex-wrap items-center gap-1">
-                  {recChannels.map((c) => (
-                    <button
-                      key={c.key}
-                      onClick={() => toggleRec(c.key)}
-                      className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
-                        recActive.has(c.key) ? "text-foreground" : "border-border text-muted hover:text-foreground"
-                      }`}
-                      style={recActive.has(c.key) ? { borderColor: c.color, color: c.color } : undefined}
-                    >
-                      {c.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[11px] uppercase tracking-wide text-muted">win</span>
-                  {[500, 1000, 2000, 5000, 10000].map((ms) => (
-                    <button
-                      key={ms}
-                      onClick={() => setRecMs(ms)}
-                      className={`rounded border px-1.5 py-0.5 text-xs tabular-nums transition-colors ${
-                        recMs === ms ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                      }`}
-                    >
-                      {ms / 1000}s
-                    </button>
-                  ))}
-                </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setDspMode("live")}
+                  className={`rounded border px-2 py-0.5 text-xs transition-colors ${
+                    dspMode === "live" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                  }`}
+                >
+                  live recorder
+                </button>
+                <button
+                  onClick={() => setDspMode("theory")}
+                  className={`rounded border px-2 py-0.5 text-xs transition-colors ${
+                    dspMode === "theory" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                  }`}
+                >
+                  filter analysis
+                </button>
               </div>
-            </div>
-            <div className="h-[28rem] w-full">
-              {t.hasIq || feature ? (
-                <Recorder
-                  trailRef={t.trailRef}
-                  channels={recChannels}
-                  active={recActive}
-                  windowMs={recMs}
-                />
-              ) : (
-                <RawUnavailable />
+              {dspMode === "live" && (
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-1">
+                    {recChannels.map((c) => (
+                      <button
+                        key={c.key}
+                        onClick={() => toggleRec(c.key)}
+                        className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
+                          recActive.has(c.key) ? "text-foreground" : "border-border text-muted hover:text-foreground"
+                        }`}
+                        style={recActive.has(c.key) ? { borderColor: c.color, color: c.color } : undefined}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] uppercase tracking-wide text-muted">win</span>
+                    {[500, 1000, 2000, 5000, 10000].map((ms) => (
+                      <button
+                        key={ms}
+                        onClick={() => setRecMs(ms)}
+                        className={`rounded border px-1.5 py-0.5 text-xs tabular-nums transition-colors ${
+                          recMs === ms ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                        }`}
+                      >
+                        {ms / 1000}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
-            <p className="mt-2 text-xs text-muted">
-              x: time [ms] (0 = now) · SAT: audio vs threshold · tap the coil = impulse to see filter response
-            </p>
+            {dspMode === "live" ? (
+              <>
+                <div className="h-[28rem] w-full">
+                  {t.hasIq || feature ? (
+                    <Recorder trailRef={t.trailRef} channels={recChannels} active={recActive} windowMs={recMs} />
+                  ) : (
+                    <RawUnavailable />
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-muted">
+                  x: time [ms] (0 = now) · SAT: audio vs threshold · tap the coil = impulse to see filter response
+                </p>
+              </>
+            ) : (
+              <FilterLab />
+            )}
           </Card>
         )}
 
