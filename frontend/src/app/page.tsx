@@ -184,13 +184,9 @@ export default function Home() {
               <Card>
                 <h2 className="mb-3 text-sm font-medium text-muted">Extras</h2>
                 <div className="flex flex-wrap gap-6">
-                  {profile?.extras.length ? (
-                    profile.extras.map((k) => (
-                      <Stat
-                        key={k}
-                        label={k}
-                        value={feature ? fmt(feature.extras[k] ?? 0, 2) : "—"}
-                      />
+                  {feature && Object.keys(feature.extras).length ? (
+                    Object.entries(feature.extras).map(([k, v]) => (
+                      <Stat key={k} label={k} value={fmt(v, 2)} />
                     ))
                   ) : (
                     <span className="text-sm text-muted">none</span>

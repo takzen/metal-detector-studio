@@ -67,7 +67,8 @@ contract.
 | Frontend: dashboard, XY hodograph, virtual oscilloscope | ✅ |
 | Frontend: live FFT + config panel | ✅ |
 | MCP server (telemetry as AI tools) | ✅ |
-| Serial transport (real USB-CDC) | 🚧 planned |
+| Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
+| Config back to MCU over serial | 🚧 needs firmware command input |
 
 Roadmap and task breakdown live in `TASKS.md`.
 
@@ -124,6 +125,16 @@ Serves on `http://127.0.0.1:8000`:
 
 Environment overrides: `METAL_LAB_PROFILE` (e.g. `urd1`), `METAL_LAB_SOURCE`
 (`synthetic` | `serial`), `METAL_LAB_HOST`, `METAL_LAB_PORT`.
+
+**Real hardware (serial):** point the backend at the device's virtual COM port:
+
+```bash
+METAL_LAB_SOURCE=serial METAL_LAB_PROFILE=urd1 METAL_LAB_SERIAL_PORT=COM5 uv run python main.py
+```
+
+The serial source parses the device's token-based ASCII telemetry (resyncing on the
+record marker, tolerant of dropped line endings). To inspect an unknown device's output
+first, use `uv run python scripts/serial_sniff.py COM5 115200`.
 
 ### 2. Frontend
 

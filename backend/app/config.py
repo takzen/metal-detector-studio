@@ -18,8 +18,12 @@ PROFILES_DIR: Path = BACKEND_DIR / "profiles"
 # Which device profile to stream. Override with METAL_LAB_PROFILE=urd1, etc.
 DEFAULT_PROFILE: str = os.environ.get("METAL_LAB_PROFILE", "spectral_g4")
 
-# Telemetry source: "synthetic" (no hardware) or "serial" (real USB-CDC, later).
+# Telemetry source: "synthetic" (no hardware) or "serial" (real USB-CDC).
 SOURCE: str = os.environ.get("METAL_LAB_SOURCE", "synthetic")
+
+# Serial transport (used when SOURCE == "serial"). USB-CDC ignores baud, but we set it.
+SERIAL_PORT: str = os.environ.get("METAL_LAB_SERIAL_PORT", "COM5")
+SERIAL_BAUD: int = int(os.environ.get("METAL_LAB_SERIAL_BAUD", "115200"))
 
 # HTTP/WebSocket server bind.
 HOST: str = os.environ.get("METAL_LAB_HOST", "127.0.0.1")

@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from .. import config
 from ..profiles import load_profile, load_schema, list_profiles
 from ..sources.base import TelemetrySource
+from ..sources.serial import SerialSource
 from ..sources.synthetic import SyntheticSource
 from ..telemetry.models import ConfigAck, ConfigCommand, Hello
 from .hub import ClientHandle, Hub
@@ -32,7 +33,8 @@ def _make_source() -> TelemetrySource:
     profile = load_profile()
     if config.SOURCE == "synthetic":
         return SyntheticSource(profile)
-    # Serial source arrives in Milestone D; fail loud until then.
+    if config.SOURCE == "serial":
+        return SerialSource(profile, config.SERIAL_PORT, config.SERIAL_BAUD)
     raise ValueError(f"unsupported METAL_LAB_SOURCE={config.SOURCE!r}")
 
 
