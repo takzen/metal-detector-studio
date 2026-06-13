@@ -20,7 +20,6 @@ export function IQScope({
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const peakRef = useRef(1);
-  // live controls without recreating the chart
   const winRef = useRef(windowMs);
   const runRef = useRef(running);
   const yRef = useRef<number | "auto">(yScale);
@@ -34,52 +33,12 @@ export function IQScope({
     const host = hostRef.current;
     if (!host) return;
 
-    const rect = host.getBoundingClientRect();
-    const opts: uPlot.Options = {
-      width: Math.max(1, Math.round(rect.width)),
-      height: Math.max(1, Math.round(rect.height)),
-      scales: {
-        x: { time: false, range: () => [0, winRef.current] },
-        y: {
-          range: () => {
-            const ys = yRef.current;
-            return ys === "auto" ? [-peakRef.current, peakRef.current] : [-ys, ys];
-          },
-        },
-      },
-      axes: [
-        { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 },
-          values: (_u, s) => s.map((v) => v.toFixed(0)) },
-        { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 }, size: 52 },
-      ],
-      series: [
-        {},
-        { label: "I", stroke: "#3b82f6", width: 1, points: { show: false } },
-        { label: "Q", stroke: "#f59e0b", width: 1, points: { show: false } },
-      ],
-      cursor: { y: false },
-      legend: { show: true },
-    };
-    const u = new uPlot(opts, [[], [], []] as unknown as uPlot.AlignedData, host);
-
-    // size correctly once the tab/container is laid out (avoids "blank until click")
-    const fitSize = () => {
-      const r = host.getBoundingClientRect();
-      u.setSize({ width: Math.max(1, Math.round(r.width)), height: Math.max(1, Math.round(r.height)) });
-    };
-    requestAnimationFrame(fitSize);
-    const ro = new ResizeObserver(fitSize);
-    ro.observe(host);
-
+    let u: uPlot | null = null;
     let af = 0;
+
     const tick = () => {
       af = requestAnimationFrame(tick);
-      // keep canvas matched to its container every frame (fixes blank-until-click)
-      const r = host.getBoundingClientRect();
-      const W = Math.max(1, Math.round(r.width));
-      const H = Math.max(1, Math.round(r.height));
-      if (W !== u.width || H !== u.height) u.setSize({ width: W, height: H });
-      if (!runRef.current) return; // hold: keep last trace frozen
+      if (!u || !runRef.current) return;
       const ib = iRef.current;
       const qb = qRef.current;
       const fs = fsRef.current || 1000;
@@ -100,17 +59,55 @@ export function IQScope({
         if (Math.abs(a) > peak) peak = Math.abs(a);
         if (Math.abs(b) > peak) peak = Math.abs(b);
       }
-      if (yRef.current === "auto") {
-        peakRef.current += 0.1 * (peak * 1.1 - peakRef.current);
-      }
+      if (yRef.current === "auto") peakRef.current += 0.1 * (peak * 1.1 - peakRef.current);
       u.setData([xs, iSeg, qSeg], false);
     };
-    af = requestAnimationFrame(tick);
+
+    const create = (w: number, h: number) => {
+      const opts: uPlot.Options = {
+        width: w,
+        height: h,
+        scales: {
+          x: { time: false, range: () => [0, winRef.current] },
+          y: {
+            range: () => {
+              const ys = yRef.current;
+              return ys === "auto" ? [-peakRef.current, peakRef.current] : [-ys, ys];
+            },
+          },
+        },
+        axes: [
+          { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 },
+            values: (_u, s) => s.map((v) => v.toFixed(0)) },
+          { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 }, size: 52 },
+        ],
+        series: [
+          {},
+          { label: "I", stroke: "#3b82f6", width: 1, points: { show: false } },
+          { label: "Q", stroke: "#f59e0b", width: 1, points: { show: false } },
+        ],
+        cursor: { y: false },
+        legend: { show: true },
+      };
+      u = new uPlot(opts, [[], [], []] as unknown as uPlot.AlignedData, host);
+      af = requestAnimationFrame(tick);
+    };
+
+    // Create the chart only once the container has a real size (fixes blank-until-click).
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0].contentRect;
+      const w = Math.max(1, Math.round(cr.width));
+      const h = Math.max(1, Math.round(cr.height));
+      if (w <= 1 || h <= 1) return;
+      if (!u) create(w, h);
+      else u.setSize({ width: w, height: h });
+    });
+    ro.observe(host);
 
     return () => {
-      cancelAnimationFrame(af);
       ro.disconnect();
-      u.destroy();
+      cancelAnimationFrame(af);
+      u?.destroy();
     };
   }, [iRef, qRef, fsRef]);
 
