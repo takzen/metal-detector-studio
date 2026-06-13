@@ -122,8 +122,10 @@ export default function Home() {
         {tab === "hodograph" && (
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="flex flex-col">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-medium text-muted">XY hodograph (I/Q vector trail)</h2>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-medium text-muted">
+                  XY hodograph — delta vs ground
+                </h2>
                 <div className="flex flex-wrap gap-3">
                   {profile?.harmonics.map((h, i) => (
                     <span key={h.id} className="inline-flex items-center gap-1.5 text-xs">

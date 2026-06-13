@@ -5,6 +5,7 @@ import { colorFor } from "@/lib/palette";
 import type { FeatureFrame, Harmonic } from "@/lib/types";
 
 const TRAIL_DRAW = 320; // recent frames rendered as the fading trail
+const BASELINE_ALPHA = 0.02; // ground-tracking speed for auto-zero
 
 export function Hodograph({
   trailRef,
@@ -15,6 +16,8 @@ export function Hodograph({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const extentRef = useRef(1000); // smoothed auto-range (lsb)
+  const baselineRef = useRef<Map<string, { i: number; q: number }>>(new Map());
+  const lastSeqRef = useRef(-1);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -49,8 +52,27 @@ export function Hodograph({
       const cx = w / 2;
       const cy = h / 2;
       const half = Math.min(w, h) / 2;
+      const base = baselineRef.current;
 
-      // --- auto-range from the visible trail ---
+      // --- update ground baseline (slow EMA), once per new frame (by seq) ---
+      const latest = trail[trail.length - 1];
+      if (latest && latest.seq !== lastSeqRef.current) {
+        lastSeqRef.current = latest.seq;
+        for (const harm of harmonics) {
+          const s = latest.harmonics[harm.id];
+          if (!s) continue;
+          const b = base.get(harm.id) ?? { i: s.i, q: s.q };
+          b.i += BASELINE_ALPHA * (s.i - b.i);
+          b.q += BASELINE_ALPHA * (s.q - b.q);
+          base.set(harm.id, b);
+        }
+      }
+      // Always plot the DELTA vs the tracked ground (raw absolute angle is useless
+      // for a detector; ground sits at the centre, targets loop out at their angle).
+      const bx = (id: string) => base.get(id)?.i ?? 0;
+      const by = (id: string) => base.get(id)?.q ?? 0;
+
+      // --- auto-range from the visible trail (after baseline removal) ---
       const start = Math.max(0, trail.length - TRAIL_DRAW);
       let peak = 1;
       for (let k = start; k < trail.length; k++) {
@@ -58,7 +80,7 @@ export function Hodograph({
         for (const harm of harmonics) {
           const s = hs[harm.id];
           if (!s) continue;
-          const m = Math.max(Math.abs(s.i), Math.abs(s.q));
+          const m = Math.max(Math.abs(s.i - bx(harm.id)), Math.abs(s.q - by(harm.id)));
           if (m > peak) peak = m;
         }
       }
@@ -73,6 +95,8 @@ export function Hodograph({
       // --- per-harmonic trail ---
       harmonics.forEach((harm, hi) => {
         const color = colorFor(hi);
+        const obx = bx(harm.id);
+        const oby = by(harm.id);
         const n = trail.length - start;
         for (let k = start; k < trail.length; k++) {
           const s = trail[k].harmonics[harm.id];
@@ -80,8 +104,8 @@ export function Hodograph({
           const age = (k - start) / Math.max(1, n); // 0 old .. 1 new
           ctx.globalAlpha = 0.05 + 0.55 * age;
           ctx.fillStyle = color;
-          const x = cx + s.i * scale;
-          const y = cy - s.q * scale;
+          const x = cx + (s.i - obx) * scale;
+          const y = cy - (s.q - oby) * scale;
           const r = 0.6 + 1.4 * age;
           ctx.beginPath();
           ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -90,8 +114,8 @@ export function Hodograph({
         // latest point + vector from origin
         const last = trail[trail.length - 1]?.harmonics[harm.id];
         if (last) {
-          const x = cx + last.i * scale;
-          const y = cy - last.q * scale;
+          const x = cx + (last.i - obx) * scale;
+          const y = cy - (last.q - oby) * scale;
           ctx.globalAlpha = 0.35;
           ctx.strokeStyle = color;
           ctx.lineWidth = 1;
