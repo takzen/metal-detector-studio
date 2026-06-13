@@ -167,15 +167,26 @@ function drawGrid(
     const dirx = -Math.cos(a);
     const diry = -Math.sin(a);
     const major = d % 30 === 0;
+
+    if (major) {
+      // faint radial spoke across the whole plot
+      ctx.strokeStyle = "#141b24";
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + dirx * radius, cy + diry * radius);
+      ctx.stroke();
+    }
+    // rim tick
     ctx.strokeStyle = "#2a3342";
     ctx.beginPath();
-    ctx.moveTo(cx + dirx * radius * (major ? 0.9 : 0.95), cy + diry * radius * (major ? 0.9 : 0.95));
+    ctx.moveTo(cx + dirx * radius * (major ? 0.92 : 0.96), cy + diry * radius * (major ? 0.92 : 0.96));
     ctx.lineTo(cx + dirx * radius, cy + diry * radius);
     ctx.stroke();
+
     if (major) {
-      ctx.fillStyle = "#6b7686";
-      ctx.font = "9px var(--font-geist-mono), monospace";
-      ctx.fillText(`${d}`, cx + dirx * radius * 0.82, cy + diry * radius * 0.82);
+      ctx.fillStyle = "#8b98a9";
+      ctx.font = "10px var(--font-geist-mono), monospace";
+      ctx.fillText(`${d}°`, cx + dirx * radius * 0.83, cy + diry * radius * 0.83);
     }
   }
   ctx.textAlign = "start";
