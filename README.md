@@ -39,7 +39,7 @@ flowchart TD
     linkStyle default stroke:#9ca3af,stroke-width:1px
 ```
 
-\* MCP server is planned (see Status).
+\* The MCP server is a standalone stdio process that consumes the same WebSocket stream.
 
 ## Features
 
@@ -65,10 +65,9 @@ contract.
 | Telemetry contract (`schema.json` + profiles) | ✅ |
 | Backend: FastAPI + WebSocket + synthetic source + config | ✅ |
 | Frontend: dashboard, XY hodograph, virtual oscilloscope | ✅ |
-| Live FFT | 🚧 planned |
-| Config panel (UI) | 🚧 planned |
+| Frontend: live FFT + config panel | ✅ |
+| MCP server (telemetry as AI tools) | ✅ |
 | Serial transport (real USB-CDC) | 🚧 planned |
-| MCP server | 🚧 planned |
 
 Roadmap and task breakdown live in `TASKS.md`.
 
@@ -151,5 +150,29 @@ multi-frequency detectors share one packet shape.
 
 ## AI Integration (Model Context Protocol)
 
-Planned: an MCP server exposing live telemetry as tools for AI models, so assistants can
-read ADC/feature data, analyze phase shifts, and suggest firmware/DSP changes directly.
+`backend/mcp_server.py` is a standalone **stdio MCP server** that connects to the running
+backend as a WebSocket client and exposes live telemetry as tools for AI assistants:
+
+- `get_status` — connection, active profile, stream rates
+- `get_profile` — harmonics, phase-diff defs, raw spec, config keys, target list
+- `get_latest_feature` — per-harmonic mag/phase(deg)/I/Q + phase diffs + extras
+- `analyze_phase` — rank target archetypes by phase-diff distance (discrimination)
+- `get_spectrum` — FFT peaks of the latest raw block (Hann window, dBFS)
+- `set_config` — push config to the source (gain, mode, noise, target, …)
+
+Start the backend (`uv run python main.py`), then register the server with your
+MCP-capable assistant (example for Claude Code's `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "metal-detector-studio": {
+      "command": "uv",
+      "args": ["run", "python", "mcp_server.py"],
+      "cwd": "backend"
+    }
+  }
+}
+```
+
+Override the target backend with `METAL_LAB_WS` (default `ws://127.0.0.1:8000/ws/telemetry`).
