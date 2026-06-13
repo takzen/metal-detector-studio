@@ -22,6 +22,7 @@ export function Hodograph({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const peakRef = useRef(1);
   const baselineRef = useRef<Map<string, { i: number; q: number }>>(new Map());
+  const dispRef = useRef<Map<string, { i: number; q: number }>>(new Map());
   const lastSeqRef = useRef(-1);
 
   useEffect(() => {
@@ -96,8 +97,15 @@ export function Hodograph({
         const s = latest?.harmonics[harm.id];
         if (!s) return;
         const color = colorFor(hi);
-        const di = s.i - bx(harm.id);
-        const dq = s.q - by(harm.id);
+        const ti = s.i - bx(harm.id);
+        const tq = s.q - by(harm.id);
+        // ease the displayed tip toward the target for smooth motion
+        const d = dispRef.current.get(harm.id) ?? { i: ti, q: tq };
+        d.i += 0.3 * (ti - d.i);
+        d.q += 0.3 * (tq - d.q);
+        dispRef.current.set(harm.id, d);
+        const di = d.i;
+        const dq = d.q;
         // X axis mirrored: ferrite / 0° sits on the LEFT (matches the device).
         const x = cx - di * scale;
         const y = cy - dq * scale;

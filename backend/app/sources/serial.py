@@ -19,10 +19,12 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import threading
 import time
+from collections import deque
 from collections.abc import AsyncIterator
 
-import serial_asyncio
+import serial  # pyserial (blocking, read in a thread — robust on Windows)
 
 from ..profiles import Profile
 from ..telemetry.models import FeatureFrame, HarmonicSample, TelemetryPacket
@@ -71,46 +73,57 @@ class SerialSource(TelemetrySource):
         self.port = port
         self.baud = baud
         self._hid = profile.harmonic_ids[0]  # single-harmonic device
-        self._writer: asyncio.StreamWriter | None = None
 
-    async def stream(self) -> AsyncIterator[TelemetryPacket]:
-        seq = 0
-        retry = 0
-        while True:
+    def _reader_loop(self, q: deque[dict[str, float]], stop: threading.Event) -> None:
+        """Blocking serial read in a background thread: parse records into the queue.
+
+        Small reads with a short timeout deliver frames continuously (~46 Hz) instead
+        of the big bursts pyserial-asyncio produced on Windows.
+        """
+        while not stop.is_set():
             try:
-                reader, writer = await serial_asyncio.open_serial_connection(
-                    url=self.port, baudrate=self.baud
-                )
-                self._writer = writer
-                retry = 0
-            except Exception:
-                retry = min(retry + 1, 6)
-                await asyncio.sleep(min(0.25 * 2**retry, 5.0))
+                ser = serial.Serial(self.port, self.baud, timeout=0.02)
+            except serial.SerialException:
+                time.sleep(1.0)
                 continue
-
             buf = ""
             try:
-                while True:
-                    data = await reader.read(4096)
+                while not stop.is_set():
+                    data = ser.read(128)
                     if not data:
-                        break  # port closed / unplugged
+                        continue
                     buf += data.decode("ascii", errors="ignore")
                     records, buf = _extract(buf)
                     if len(buf) > 8192:
-                        buf = buf[-1024:]  # runaway guard
+                        buf = buf[-1024:]
                     for rec in records:
                         f = _parse_record(rec)
                         if "X" in f and "Y" in f:
-                            yield self._feature(seq, f)
-                            seq += 1
-            except asyncio.CancelledError:
-                raise
-            except Exception:
+                            q.append(f)
+                            if len(q) > 500:
+                                q.popleft()
+            except serial.SerialException:
                 pass
             finally:
-                self._writer = None
-                writer.close()
-            await asyncio.sleep(0.5)
+                ser.close()
+            time.sleep(0.5)
+
+    async def stream(self) -> AsyncIterator[TelemetryPacket]:
+        q: deque[dict[str, float]] = deque()
+        stop = threading.Event()
+        thread = threading.Thread(target=self._reader_loop, args=(q, stop), daemon=True)
+        thread.start()
+        seq = 0
+        try:
+            while True:
+                if q:
+                    f = q.popleft()
+                    yield self._feature(seq, f)
+                    seq += 1
+                else:
+                    await asyncio.sleep(0.003)
+        finally:
+            stop.set()
 
     def _feature(self, seq: int, f: dict[str, float]) -> FeatureFrame:
         i = f["X"]
