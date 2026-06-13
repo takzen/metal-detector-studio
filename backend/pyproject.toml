@@ -1,7 +1,16 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "Metal Detector Studio — bench lab backend (telemetry stream + synthetic source)"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "numpy>=2.0",
+    "pydantic>=2.7",
+    "pyserial-asyncio>=0.6",
+]
+
+[tool.uv]
+package = false
