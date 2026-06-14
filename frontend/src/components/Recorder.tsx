@@ -44,6 +44,7 @@ export function Recorder({
   windowMs,
   scaleMode,
   zoom,
+  paused = false,
 }: {
   trailRef: React.RefObject<FeatureFrame[]>;
   channels: RecChannel[];
@@ -53,12 +54,15 @@ export function Recorder({
   scaleMode: "auto" | "manual";
   /** Manual zoom factor applied around each lane's centre (>1 = zoom in). */
   zoom: number;
+  /** Freeze the strip-chart (play/stop): when true the view stops updating. */
+  paused?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const winRef = useRef(windowMs);
   const activeRef = useRef(active);
   const scaleModeRef = useRef(scaleMode);
   const zoomRef = useRef(zoom);
+  const pausedRef = useRef(paused);
   const scaleRef = useRef<Map<string, { lo: number; hi: number }>>(new Map());
   const layoutRef = useRef<LaneLayout[]>([]);
   useEffect(() => {
@@ -66,6 +70,7 @@ export function Recorder({
     activeRef.current = active;
     scaleModeRef.current = scaleMode;
     zoomRef.current = zoom;
+    pausedRef.current = paused;
   });
 
   useEffect(() => {
@@ -182,6 +187,7 @@ export function Recorder({
 
     const tick = () => {
       af = requestAnimationFrame(tick);
+      if (pausedRef.current) return; // play/stop: freeze the view (keep last drawn frame)
       const trail = trailRef.current;
       if (trail.length < 2) return;
       const tNow = trail[trail.length - 1].t;

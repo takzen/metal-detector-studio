@@ -100,6 +100,7 @@ export default function Home() {
   const [recActive, setRecActive] = useState<Set<string>>(new Set(["audio", "threshold"]));
   const [recScaleMode, setRecScaleMode] = useState<"auto" | "manual">("auto"); // recorder lane scaling
   const [recZoom, setRecZoom] = useState(1); // manual lane zoom factor
+  const [recPaused, setRecPaused] = useState(false); // recorder freeze (play/stop)
   const [dspMode, setDspMode] = useState<"live" | "theory">("live");
   const [offsetDeg, setOffsetDeg] = useState(0); // demodulator phase offset (colour overlay)
   const [persistence, setPersistence] = useState(true); // hodograph phosphor trail
@@ -110,8 +111,9 @@ export default function Home() {
       { key: "audio", label: "audio", color: "#10b981", lane: "aud", range: [0, 4000], get: (f) => { const a = f.extras.audio; return a == null ? undefined : Math.max(0, Math.min(4000, a)); } },
       { key: "threshold", label: "threshold", color: "#ef4444", lane: "aud", range: [0, 4000], get: (f) => { const a = f.extras.threshold; return a == null ? undefined : Math.max(0, Math.min(4000, a)); } },
       { key: "ground", label: "ground", color: "#a855f7", get: (f) => f.extras.ground },
-      { key: "I", label: "I", color: "#3b82f6", lane: "iq", get: (f) => Object.values(f.harmonics)[0]?.i },
-      { key: "Q", label: "Q", color: "#22d3ee", lane: "iq", get: (f) => Object.values(f.harmonics)[0]?.q },
+      // I/Q = post-filter output of the active mode (FX/FY); falls back to raw hodograph I/Q on old firmware.
+      { key: "I", label: "I (filt)", color: "#3b82f6", lane: "iq", get: (f) => f.extras.fx ?? Object.values(f.harmonics)[0]?.i },
+      { key: "Q", label: "Q (filt)", color: "#22d3ee", lane: "iq", get: (f) => f.extras.fy ?? Object.values(f.harmonics)[0]?.q },
     ],
     [],
   );
@@ -600,6 +602,17 @@ export default function Home() {
               </div>
               {dspMode === "live" && (
                 <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={() => setRecPaused((p) => !p)}
+                    className={`rounded border px-2 py-0.5 text-xs font-medium transition-colors ${
+                      recPaused
+                        ? "border-emerald-500 text-emerald-400 hover:text-emerald-300"
+                        : "border-red-500 text-red-400 hover:text-red-300"
+                    }`}
+                    title={recPaused ? "Resume live recording" : "Freeze the recorder"}
+                  >
+                    {recPaused ? "▶ play" : "■ stop"}
+                  </button>
                   <div className="flex flex-wrap items-center gap-1">
                     {recChannels.map((c) => (
                       <button
@@ -676,6 +689,7 @@ export default function Home() {
                       windowMs={recMs}
                       scaleMode={recScaleMode}
                       zoom={recZoom}
+                      paused={recPaused}
                     />
                   ) : (
                     <RawUnavailable />

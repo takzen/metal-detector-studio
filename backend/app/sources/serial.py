@@ -4,7 +4,7 @@ Target: TAKTYK / URD-1 firmware (ATxmega), streaming line-delimited ASCII over a
 virtual COM port:
 
     feature (~50 Hz):
-      X:.. Y:.. OX:.. OY:.. VDI:.. G:.. A:.. K:.. M:.. PX:.. PY:..\r\n
+      X:.. Y:.. DX:.. DY:.. VDI:.. G:.. A:.. TH:.. K:.. M:.. PX:.. PY:.. FX:.. FY:..\r\n
     raw I/Q block (1 kHz, ~20 samples per feature):
       RB:1000 20 i0 q0 i1 q1 ...\r\n
 
@@ -43,6 +43,8 @@ _EXTRA_KEYS = {
     "PY": "py",
     "X": "x_raw",
     "Y": "y_raw",
+    "FX": "fx",         # post-filter I of the active mode (DEEP/RELIC=lp, DISC=vc, PROS=ac, PIN=lp)
+    "FY": "fy",         # post-filter Q of the active mode -> recorder I/Q (instead of raw)
 }
 
 # queue item: ("f", feature_dict) | ("iq", (sample_rate, i_list, q_list))
