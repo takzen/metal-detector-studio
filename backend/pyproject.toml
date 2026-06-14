@@ -1,7 +1,7 @@
 [project]
 name = "backend"
-version = "0.1.0"
-description = "Metal Detector Studio — bench lab backend (telemetry stream + synthetic source)"
+version = "0.2.0"
+description = "Metal Detector Studio — bench lab backend (real-time telemetry over serial)"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
