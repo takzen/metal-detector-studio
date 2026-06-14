@@ -57,10 +57,11 @@ flowchart TD
   stream processed vectors (e.g. TAKTYK), or the raw ADC RX block where available.
 - **Live FFT (Spectrum Analyzer):** Hann-windowed dBFS spectrum with selectable frequency
   span and a peak marker — environmental EMI monitoring to pick clean working bands.
-- **DSP / SAT Analyzer:** a multi-channel strip-chart recorder (audio vs SAT threshold,
-  ground, VDI, I/Q) to study self-adjusting-threshold behaviour and live filter response,
-  plus a theoretical **filter lab** (EMA / band-pass impulse + frequency response, −3 dB
-  estimate) mirroring the firmware DSP.
+- **DSP Analyzer:** a multi-channel strip-chart recorder — each signal on its own lane
+  (per-channel auto, lock, or fixed scale): **audio** (the signal-strength indicator) with the
+  **threshold** floor overlaid on the same 0..4000 scale, plus **ground** (post-correction
+  baseline) — to watch the detection chain over time; plus a theoretical **filter lab**
+  (EMA / band-pass impulse + frequency response, −3 dB estimate) mirroring the firmware DSP.
 - **Dynamic, profile-driven mapping:** a device-agnostic JSON contract
   (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
   firmware without PC rewrites. Profile and serial port are switchable live from the
