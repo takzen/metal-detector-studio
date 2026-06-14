@@ -190,7 +190,10 @@ export function Recorder({
       if (pausedRef.current) return; // play/stop: freeze the view (keep last drawn frame)
       const trail = trailRef.current;
       if (trail.length < 2) return;
-      const tNow = trail[trail.length - 1].t;
+      // Anchor the right edge to a free-running wall clock (not the last sample's timestamp)
+      // so the strip-chart scrolls smoothly even when frames arrive in bursts. Samples sit at
+      // their own (client) arrival times; the window slides continuously every rAF.
+      const tNow = performance.now() / 1000;
       const win = winRef.current / 1000;
       const t0 = tNow - win;
 

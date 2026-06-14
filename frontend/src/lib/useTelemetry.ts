@@ -117,6 +117,10 @@ export function useTelemetry(): Telemetry {
           }
           case "feature": {
             const f = msg as FeatureFrame;
+            // Re-stamp with the client arrival clock (monotonic, seconds). The backend `t` is
+            // assigned when the queue is drained, so bursty serial/WS delivery clumps it and the
+            // strip-chart scroll jerks. A client clock gives the recorder a smooth time base.
+            f.t = performance.now() / 1000;
             featureRef.current = f;
             const trail = trailRef.current;
             trail.push(f);

@@ -112,8 +112,9 @@ export default function Home() {
       { key: "threshold", label: "threshold", color: "#ef4444", lane: "aud", range: [0, 4000], get: (f) => { const a = f.extras.threshold; return a == null ? undefined : Math.max(0, Math.min(4000, a)); } },
       { key: "ground", label: "ground", color: "#a855f7", get: (f) => f.extras.ground },
       // I/Q = post-filter output of the active mode (FX/FY); falls back to raw hodograph I/Q on old firmware.
-      { key: "I", label: "I (filt)", color: "#3b82f6", lane: "iq", get: (f) => f.extras.fx ?? Object.values(f.harmonics)[0]?.i },
-      { key: "Q", label: "Q (filt)", color: "#22d3ee", lane: "iq", get: (f) => f.extras.fy ?? Object.values(f.harmonics)[0]?.q },
+      // Separate lanes so each has its own axis + zero baseline (not a shared I/Q scale).
+      { key: "I", label: "I (filt)", color: "#3b82f6", get: (f) => f.extras.fx ?? Object.values(f.harmonics)[0]?.i },
+      { key: "Q", label: "Q (filt)", color: "#22d3ee", get: (f) => f.extras.fy ?? Object.values(f.harmonics)[0]?.q },
     ],
     [],
   );
