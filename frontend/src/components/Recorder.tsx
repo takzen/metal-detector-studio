@@ -11,6 +11,8 @@ export interface RecChannel {
   get: (f: FeatureFrame) => number | undefined;
   /** Channels sharing a `lane` are drawn together on one shared scale (default: own lane). */
   lane?: string;
+  /** Fixed lane range [min,max] — overrides auto-scale (e.g. audio/threshold 0..4000 = DAC). */
+  range?: [number, number];
 }
 
 const PAD = 0.06; // vertical gap between lanes (fraction of a lane height)
@@ -238,18 +240,27 @@ export function Recorder({
           const col = raw.get(c.key)!;
           for (let k = 0; k < m; k++) { const v = col[k]; if (v !== null) { if (v < lo) lo = v; if (v > hi) hi = v; } }
         }
-        if (lo === Infinity) { lo = -1; hi = 1; }
-        lo = Math.min(lo, 0); hi = Math.max(hi, 0); // anchor 0 so the baseline is always on-scale
-        if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
-        const rng = hi - lo;
-        lo -= rng * 0.1; hi += rng * 0.1;
-        // lane scale: EMA-track in auto, frozen in manual; manual zoom around the centre
-        let baseSc = scaleRef.current.get(id);
-        if (!baseSc) { baseSc = { lo, hi }; scaleRef.current.set(id, baseSc); }
-        else if (scaleModeRef.current === "auto") { baseSc.lo += 0.15 * (lo - baseSc.lo); baseSc.hi += 0.15 * (hi - baseSc.hi); }
-        const center = (baseSc.lo + baseSc.hi) / 2;
-        const half = (((baseSc.hi - baseSc.lo) / 2) || 1) / (zoomRef.current || 1);
-        const scLo = center - half, scHi = center + half;
+        // fixed lane range (e.g. audio/threshold 0..4000 = DAC) overrides auto-scale
+        const fixed = lcs.find((c) => c.range)?.range;
+        let scLo: number, scHi: number;
+        if (fixed) {
+          scLo = fixed[0];
+          scHi = fixed[1];
+        } else {
+          if (lo === Infinity) { lo = -1; hi = 1; }
+          lo = Math.min(lo, 0); hi = Math.max(hi, 0); // anchor 0 so the baseline is always on-scale
+          if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+          const rng = hi - lo;
+          lo -= rng * 0.1; hi += rng * 0.1;
+          // EMA-track in auto, frozen in manual; manual zoom around the centre
+          let baseSc = scaleRef.current.get(id);
+          if (!baseSc) { baseSc = { lo, hi }; scaleRef.current.set(id, baseSc); }
+          else if (scaleModeRef.current === "auto") { baseSc.lo += 0.15 * (lo - baseSc.lo); baseSc.hi += 0.15 * (hi - baseSc.hi); }
+          const center = (baseSc.lo + baseSc.hi) / 2;
+          const half = (((baseSc.hi - baseSc.lo) / 2) || 1) / (zoomRef.current || 1);
+          scLo = center - half;
+          scHi = center + half;
+        }
         const span = scHi - scLo || 1;
 
         // lane vertical band in [0,1] (lane 0 at top)

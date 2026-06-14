@@ -102,8 +102,8 @@ export default function Home() {
 
   const recChannels = useMemo<RecChannel[]>(
     () => [
-      { key: "audio", label: "audio", color: "#10b981", lane: "aud", get: (f) => { const a = f.extras.audio; return a == null ? undefined : Math.max(0, a); } },
-      { key: "threshold", label: "threshold", color: "#ef4444", lane: "aud", get: (f) => { const a = f.extras.threshold; return a == null ? undefined : Math.max(0, a); } },
+      { key: "audio", label: "audio", color: "#10b981", lane: "aud", range: [0, 4000], get: (f) => { const a = f.extras.audio; return a == null ? undefined : Math.max(0, Math.min(4000, a)); } },
+      { key: "threshold", label: "threshold", color: "#ef4444", lane: "aud", range: [0, 4000], get: (f) => { const a = f.extras.threshold; return a == null ? undefined : Math.max(0, Math.min(4000, a)); } },
       { key: "ground", label: "ground", color: "#a855f7", get: (f) => f.extras.ground },
       { key: "I", label: "I", color: "#3b82f6", lane: "iq", get: (f) => Object.values(f.harmonics)[0]?.i },
       { key: "Q", label: "Q", color: "#22d3ee", lane: "iq", get: (f) => Object.values(f.harmonics)[0]?.q },

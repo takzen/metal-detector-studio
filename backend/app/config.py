@@ -15,8 +15,9 @@ BACKEND_DIR: Path = Path(__file__).resolve().parent.parent
 SCHEMA_PATH: Path = BACKEND_DIR / "schema.json"
 PROFILES_DIR: Path = BACKEND_DIR / "profiles"
 
-# Which device profile to stream. Override with METAL_LAB_PROFILE=urd1, etc.
-DEFAULT_PROFILE: str = os.environ.get("METAL_LAB_PROFILE", "spectral_g4")
+# Which device profile to stream. Override with METAL_LAB_PROFILE=spectral_g4, etc.
+# Default = urd1 (TAKTYK, the real connected device); spectral_g4 has no live source yet.
+DEFAULT_PROFILE: str = os.environ.get("METAL_LAB_PROFILE", "urd1")
 
 # Telemetry source. Only "serial" (real USB-CDC) is supported; synthetic data was dropped.
 SOURCE: str = os.environ.get("METAL_LAB_SOURCE", "serial")
