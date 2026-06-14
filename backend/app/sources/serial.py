@@ -35,7 +35,7 @@ from .base import TelemetrySource
 _EXTRA_KEYS = {
     "VDI": "vdi",
     "G": "ground",
-    "A": "audio",
+    "A": "audio",       # out.audio_signal = LCD signal-strength indicator (clamp 0..4000 on display)
     "TH": "threshold",
     "K": "kgnd",
     "M": "mode",

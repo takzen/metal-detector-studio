@@ -24,7 +24,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "hodograph", label: "XY hodograph" },
   { id: "scope", label: "Oscilloscope" },
   { id: "fft", label: "Live FFT" },
-  { id: "dsp", label: "DSP / SAT" },
+  { id: "dsp", label: "DSP" },
 ];
 
 function StatusDot({ status }: { status: ConnStatus }) {
@@ -93,6 +93,8 @@ export default function Home() {
   const [fftSpan, setFftSpan] = useState<number | "full">("full"); // FFT frequency span [Hz]
   const [recMs, setRecMs] = useState(2000); // DSP recorder window
   const [recActive, setRecActive] = useState<Set<string>>(new Set(["audio", "threshold"]));
+  const [recScaleMode, setRecScaleMode] = useState<"auto" | "manual">("auto"); // recorder lane scaling
+  const [recZoom, setRecZoom] = useState(1); // manual lane zoom factor
   const [dspMode, setDspMode] = useState<"live" | "theory">("live");
   const [offsetDeg, setOffsetDeg] = useState(0); // demodulator phase offset (colour overlay)
   const [persistence, setPersistence] = useState(true); // hodograph phosphor trail
@@ -100,12 +102,11 @@ export default function Home() {
 
   const recChannels = useMemo<RecChannel[]>(
     () => [
-      { key: "audio", label: "audio", color: "#10b981", get: (f) => f.extras.audio },
-      { key: "threshold", label: "SAT thr", color: "#ef4444", get: (f) => f.extras.threshold },
+      { key: "audio", label: "audio", color: "#10b981", lane: "aud", get: (f) => { const a = f.extras.audio; return a == null ? undefined : Math.max(0, a); } },
+      { key: "threshold", label: "threshold", color: "#ef4444", lane: "aud", get: (f) => { const a = f.extras.threshold; return a == null ? undefined : Math.max(0, a); } },
       { key: "ground", label: "ground", color: "#a855f7", get: (f) => f.extras.ground },
-      { key: "vdi", label: "vdi", color: "#f59e0b", get: (f) => f.extras.vdi },
-      { key: "I", label: "I", color: "#3b82f6", get: (f) => Object.values(f.harmonics)[0]?.i },
-      { key: "Q", label: "Q", color: "#22d3ee", get: (f) => Object.values(f.harmonics)[0]?.q },
+      { key: "I", label: "I", color: "#3b82f6", lane: "iq", get: (f) => Object.values(f.harmonics)[0]?.i },
+      { key: "Q", label: "Q", color: "#22d3ee", lane: "iq", get: (f) => Object.values(f.harmonics)[0]?.q },
     ],
     [],
   );
@@ -612,6 +613,40 @@ export default function Home() {
                       </button>
                     ))}
                   </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] uppercase tracking-wide text-muted">scale</span>
+                    <button
+                      onClick={() => setRecScaleMode("auto")}
+                      className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
+                        recScaleMode === "auto" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                      }`}
+                    >
+                      auto
+                    </button>
+                    <button
+                      onClick={() => setRecScaleMode("manual")}
+                      className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
+                        recScaleMode === "manual" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                      }`}
+                    >
+                      lock
+                    </button>
+                    <button
+                      onClick={() => { setRecScaleMode("manual"); setRecZoom((z) => Math.min(20, +(z * 1.4).toFixed(2))); }}
+                      className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
+                    >
+                      +
+                    </button>
+                    <button
+                      onClick={() => { setRecScaleMode("manual"); setRecZoom((z) => Math.max(0.05, +(z / 1.4).toFixed(2))); }}
+                      className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
+                    >
+                      −
+                    </button>
+                    <span className="w-12 text-[11px] tabular-nums text-muted">
+                      {recScaleMode === "auto" ? "auto" : `×${recZoom.toFixed(1)}`}
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
@@ -619,13 +654,21 @@ export default function Home() {
               <>
                 <div className="h-[28rem] w-full">
                   {t.hasIq || feature ? (
-                    <Recorder trailRef={t.trailRef} channels={recChannels} active={recActive} windowMs={recMs} />
+                    <Recorder
+                      trailRef={t.trailRef}
+                      channels={recChannels}
+                      active={recActive}
+                      windowMs={recMs}
+                      scaleMode={recScaleMode}
+                      zoom={recZoom}
+                    />
                   ) : (
                     <RawUnavailable />
                   )}
                 </div>
                 <p className="mt-2 text-xs text-muted">
-                  x: time [ms] (0 = now) · SAT: audio vs threshold · tap the coil = impulse to see filter response
+                  x: time [ms] (0 = now) · each channel on its own axis (scale in the left gutter) ·
+                  tap the coil = impulse to see the filter response
                 </p>
               </>
             ) : (
