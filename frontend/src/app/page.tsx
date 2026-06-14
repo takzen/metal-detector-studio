@@ -18,6 +18,11 @@ const fmt = (n: number, d = 1) => n.toFixed(d);
 const clamp180 = (d: number) => Math.max(-180, Math.min(180, d));
 const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
 const VDI_COLOR = "#c99a52"; // matches the hodograph VDI sub-scale
+const MODE_NAMES = ["DEEP", "DISC", "RELIC", "PIN", "PROS"]; // firmware M token (mode 0..4)
+// TH is sent as THRESHOLD_AMP (DAC 0..1333) for the audio overlay; invert it back to the
+// menu THRESHOLD value (0..200) for the readout. Mirrors firmware AUDIO_AMP_MAX/3 scale.
+const THRESHOLD_DAC_FULL = 4000 / 3;
+const thresholdMenu = (dac: number) => Math.round((dac * 200) / THRESHOLD_DAC_FULL);
 
 type TabId = "hodograph" | "scope" | "fft" | "dsp";
 const TABS: { id: TabId; label: string }[] = [
@@ -351,7 +356,17 @@ export default function Home() {
                 {feature && Object.keys(feature.extras).length ? (
                   <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
                     {Object.entries(feature.extras).map(([k, v]) => (
-                      <Stat key={k} label={k} value={fmt(v, 2)} />
+                      <Stat
+                        key={k}
+                        label={k}
+                        value={
+                          k === "mode"
+                            ? (MODE_NAMES[Math.round(v)] ?? String(Math.round(v)))
+                            : k === "threshold"
+                            ? String(thresholdMenu(v))
+                            : fmt(v, 2)
+                        }
+                      />
                     ))}
                   </div>
                 ) : (
