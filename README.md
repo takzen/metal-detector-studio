@@ -8,8 +8,6 @@ a DSP/SAT analyzer for ground-balance and discrimination tuning.
 
 It is a **universal bench lab**: the detector under test is described by a JSON
 **device profile**, so the same studio drives different firmwares without code changes.
-And it runs **without hardware** — a built-in synthetic source reproduces the telemetry
-contract so the whole pipeline works on the bench before an MCU is connected.
 
 ![Metal Detector Studio — live dashboard with XY hodograph and per-harmonic I/Q readout](assets/mds_1.webp)
 
@@ -29,12 +27,10 @@ rewriting the PC software.
 %%{init: {'theme': 'dark'}}%%
 flowchart TD
     A["Microcontroller<br>(STM32G4 / ATxmega)"] -->|"USB-CDC / USART"| B
-    S["Synthetic source<br>(bench, no hardware)"] -->|"same contract"| B
     B["Python Backend<br>(FastAPI · WebSocket · profiles)"] -->|"WebSocket telemetry / config"| C["Next.js Frontend<br>(React · Tailwind · uPlot)"]
     B -->|"WebSocket"| M["MCP server<br>(stdio)"] -->|"tools"| D["AI agent<br>(Claude, …)"]
 
     style A fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
-    style S fill:#1a1a1a,stroke:#10b981,stroke-width:2px,color:#ffffff
     style B fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
     style C fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
     style M fill:#1a1a1a,stroke:#a855f7,stroke-width:2px,color:#ffffff
@@ -44,10 +40,15 @@ flowchart TD
 
 ## Features
 
-- **Vector & Phase-Shift Analysis (XY hodograph):** live I/Q vector trail per harmonic,
-  drawn as **delta vs ground** (SERVICE2-style) with a signed ±180° protractor (0° at
-  left/ferrite), a large smoothed phase readout, and keyboard/one-click zero — for target
-  discrimination and ground-balance alignment.
+- **Vector & Phase-Shift Analysis (XY hodograph):** live I/Q vector per harmonic on a signed
+  ±180° protractor (0° at left), with a large smoothed phase readout and keyboard/one-click
+  signal zero (recenters on the current vector). A **persistence / phosphor** mode leaves a
+  fading trail where the vector tip has been (oscilloscope-style; dwelt-on phases stay
+  brighter), an adjustable **EMA** control trades responsiveness for stability, and a visual
+  **demodulator phase-offset** axis
+  marks a re-tuned coordinate without altering the measured phase. A **VDI sub-scale** on the
+  upper half maps phase 0 / 90 / 180° to −90 / 0 / +90, shown on the dial and as a large
+  top-right readout mirroring the phase angle (top-left).
 - **Virtual Oscilloscope:** real-time time-domain plot with timebase (50 ms–2 s),
   auto/manual vertical scale, and run/hold. Shows the raw ADC RX block where available, or
   the demodulated I/Q channels for devices that only stream processed vectors (e.g. TAKTYK).
@@ -59,25 +60,21 @@ flowchart TD
   estimate) mirroring the firmware DSP.
 - **Dynamic, profile-driven mapping:** a device-agnostic JSON contract
   (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
-  firmware without PC rewrites. Source, profile, and serial port are switchable live from
-  the header (no backend restart).
-- **Bi-directional Control:** send configuration (gain, mode, noise, target, …) to the
-  active source. Fully wired for the synthetic source; over serial it depends on the
-  firmware accepting inbound commands.
+  firmware without PC rewrites. Profile and serial port are switchable live from the
+  header (no backend restart).
 - **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
   coding assistants (read frames, analyze phase/spectrum, push config).
 
 ## Status
 
-Built end-to-end on synthetic data first; hardware transport slots in behind the same
-contract.
+Talks to real detector hardware over USB-CDC; each device is described by a JSON profile.
 
 | Area | State |
 | --- | --- |
 | Telemetry contract (`schema.json` + profiles) | ✅ |
-| Backend: FastAPI + WebSocket + synthetic source + config | ✅ |
-| Frontend: dashboard (hodograph · oscilloscope · FFT · DSP/SAT · control) | ✅ |
-| Live source/profile/port switching from the UI | ✅ |
+| Backend: FastAPI + WebSocket + serial (USB-CDC) source | ✅ |
+| Frontend: dashboard (hodograph · oscilloscope · FFT · DSP/SAT) | ✅ |
+| Live profile/port switching from the UI | ✅ |
 | MCP server (telemetry as AI tools) | ✅ |
 | Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
 | Config back to MCU over serial | 🚧 needs firmware command input |
@@ -105,7 +102,7 @@ Roadmap and task breakdown live in `TASKS.md`.
 │   │   ├── profiles.py    # profile + schema loader/validation
 │   │   ├── config.py      # env-overridable settings
 │   │   ├── telemetry/     # pydantic models (the contract in code)
-│   │   ├── sources/       # synthetic + serial (USB-CDC) sources
+│   │   ├── sources/       # serial (USB-CDC) source
 │   │   └── server/        # FastAPI app + WebSocket broadcast hub
 │   └── scripts/           # ws_client.py (smoke test), serial_sniff.py (port recon)
 └── frontend/              # Next.js app
@@ -123,7 +120,7 @@ Roadmap and task breakdown live in `TASKS.md`.
 
 - Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/)
 - Node.js ≥ 20 and [pnpm](https://pnpm.io/)
-- (Optional) a detector MCU configured for USB-CDC telemetry — not required for bench work.
+- A detector MCU streaming USB-CDC telemetry (e.g. TAKTYK / URD-1).
 
 ### 1. Backend
 
@@ -138,13 +135,13 @@ Serves on `http://127.0.0.1:8000`:
 - REST: `/api/health`, `/api/schema`, `/api/profiles`, `/api/profile`
 - WebSocket: `/ws/telemetry`
 
-Environment overrides: `METAL_LAB_PROFILE` (e.g. `urd1`), `METAL_LAB_SOURCE`
-(`synthetic` | `serial`), `METAL_LAB_HOST`, `METAL_LAB_PORT`.
+Environment overrides: `METAL_LAB_PROFILE` (e.g. `urd1`), `METAL_LAB_SERIAL_PORT`
+(e.g. `COM5`), `METAL_LAB_HOST`, `METAL_LAB_PORT`.
 
-**Real hardware (serial):** point the backend at the device's virtual COM port:
+Point the backend at the device's virtual COM port (defaults to `COM5`):
 
 ```bash
-METAL_LAB_SOURCE=serial METAL_LAB_PROFILE=urd1 METAL_LAB_SERIAL_PORT=COM5 uv run python main.py
+METAL_LAB_PROFILE=urd1 METAL_LAB_SERIAL_PORT=COM5 uv run python main.py
 ```
 
 The serial source parses the device's token-based ASCII telemetry (resyncing on the
@@ -169,7 +166,7 @@ The PC ↔ firmware contract is self-describing:
 - `backend/schema.json` — device-agnostic packet grammar (`hello`, `feature`, `raw`,
   `config`, `config_ack`).
 - `backend/profiles/*.json` — concrete devices: harmonics, phase-diff definitions, raw
-  ADC parameters, stream rates, and the synthetic-source model.
+  ADC parameters, and stream rates.
 
 `feature` frames carry harmonics and phase diffs as keyed maps, so single- and
 multi-frequency detectors share one packet shape.
