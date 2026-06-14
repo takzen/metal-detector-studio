@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ControlPanel } from "@/components/ControlPanel";
 import { FilterLab } from "@/components/FilterLab";
 import { Hodograph } from "@/components/Hodograph";
 import { IQScope } from "@/components/IQScope";
@@ -14,16 +13,18 @@ import { colorFor } from "@/lib/palette";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 
 const DEG = 180 / Math.PI;
+const VERSION = "v0.1.0-beta";
 const fmt = (n: number, d = 1) => n.toFixed(d);
 const clamp180 = (d: number) => Math.max(-180, Math.min(180, d));
+const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
+const VDI_COLOR = "#c99a52"; // matches the hodograph VDI sub-scale
 
-type TabId = "hodograph" | "scope" | "fft" | "dsp" | "control";
+type TabId = "hodograph" | "scope" | "fft" | "dsp";
 const TABS: { id: TabId; label: string }[] = [
   { id: "hodograph", label: "XY hodograph" },
   { id: "scope", label: "Oscilloscope" },
   { id: "fft", label: "Live FFT" },
   { id: "dsp", label: "DSP / SAT" },
-  { id: "control", label: "Control" },
 ];
 
 function StatusDot({ status }: { status: ConnStatus }) {
@@ -68,8 +69,8 @@ function RawUnavailable() {
       <p className="text-sm text-muted">No raw ADC stream from this source.</p>
       <p className="max-w-md text-xs text-muted">
         This device (e.g. TAKTYK / URD-1) sends only the processed I/Q feature vector — no raw
-        samples — so the oscilloscope and FFT have nothing to plot. They work with the synthetic
-        source or a device that streams raw blocks (e.g. Spectral-G4).
+        samples — so the oscilloscope and FFT have nothing to plot. They need a device that
+        streams raw blocks (e.g. Spectral-G4).
       </p>
     </div>
   );
@@ -127,11 +128,14 @@ export default function Home() {
 
   return (
     <main className="flex-1 w-full max-w-7xl mx-auto p-6">
-      {/* Header (stable layout) */}
-      <header className="border-b border-border pb-4">
+      {/* Header (stable layout): title + metrics, then tabs alongside source controls */}
+      <header className="border-b border-border pb-3">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold">Metal Detector Studio</h1>
+            <div className="flex items-baseline gap-2">
+              <h1 className="text-xl font-semibold">Metal Detector Studio</h1>
+              <span className="font-mono text-xs text-muted">{VERSION}</span>
+            </div>
             <p className="truncate text-sm text-muted">
               {profile ? profile.title : "waiting for device profile…"}
             </p>
@@ -144,30 +148,28 @@ export default function Home() {
             <Metric label="seq" value={feature ? String(feature.seq) : "—"} w="w-24" />
           </div>
         </div>
-        <div className="mt-3">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+          <nav className="flex flex-wrap gap-1">
+            {TABS.map((tabDef) => {
+              const active = tab === tabDef.id;
+              return (
+                <button
+                  key={tabDef.id}
+                  onClick={() => setTab(tabDef.id)}
+                  className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                    active
+                      ? "border-accent text-foreground"
+                      : "border-transparent text-muted hover:text-foreground"
+                  }`}
+                >
+                  {tabDef.label}
+                </button>
+              );
+            })}
+          </nav>
           <SourceControls />
         </div>
       </header>
-
-      {/* Tabs */}
-      <nav className="mt-4 flex gap-1 border-b border-border">
-        {TABS.map((tabDef) => {
-          const active = tab === tabDef.id;
-          return (
-            <button
-              key={tabDef.id}
-              onClick={() => setTab(tabDef.id)}
-              className={`-mb-px border-b-2 px-4 py-2 text-sm transition-colors ${
-                active
-                  ? "border-accent text-foreground"
-                  : "border-transparent text-muted hover:text-foreground"
-              }`}
-            >
-              {tabDef.label}
-            </button>
-          );
-        })}
-      </nav>
 
       {/* Active view */}
       <section className="mt-6">
@@ -269,6 +271,22 @@ export default function Home() {
                         style={{ color: colorFor(i) }}
                       >
                         {deg === null ? "—" : deg.toFixed(1)}°
+                      </span>
+                    );
+                  })}
+                </div>
+                {/* large VDI readout (mirror of the phase readout, top-right) */}
+                <div className="pointer-events-none absolute right-3 top-2 flex flex-col items-end gap-0.5">
+                  {profile?.harmonics.map((h) => {
+                    const s = feature?.harmonics[h.id];
+                    const vdi = s ? wrap180(Math.atan2(s.q, s.i) * DEG - 90) : null;
+                    return (
+                      <span
+                        key={h.id}
+                        className="font-mono text-3xl leading-none tabular-nums"
+                        style={{ color: VDI_COLOR }}
+                      >
+                        {vdi === null ? "—" : vdi.toFixed(1)}
                       </span>
                     );
                   })}
@@ -533,14 +551,6 @@ export default function Home() {
           </Card>
         )}
 
-        {tab === "control" &&
-          (profile ? (
-            <ControlPanel profile={profile} sendConfig={t.sendConfig} lastAck={stats.lastAck} />
-          ) : (
-            <Card>
-              <p className="text-sm text-muted">waiting for device profile…</p>
-            </Card>
-          ))}
       </section>
     </main>
   );

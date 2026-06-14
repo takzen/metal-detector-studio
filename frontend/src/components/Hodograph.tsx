@@ -19,6 +19,8 @@ const NOISE_FLOOR_K = 10; // idle floor = K x noise level -> noise stays a small
 const ABS_FLOOR = 1; // never divide by ~0
 
 const OFFSET_COLOR = "#22d3ee"; // colour overlay marking the demodulator phase offset
+const VDI_COLOR = "#c99a52"; // VDI sub-scale on the upper half (phase 0/90/180 -> -90/0/+90)
+const TRAIL_LEN = 300; // persistence trail length in frames (~5 s at 60 fps); older points fade out
 
 export function Hodograph({
   trailRef,
@@ -64,6 +66,9 @@ export function Hodograph({
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    // screen-space persistence trail (per harmonic): recent on-screen dot positions
+    const screenTrail = new Map<string, { x: number; y: number }[]>();
 
     let af = 0;
     let w = 0;
@@ -137,34 +142,11 @@ export function Hodograph({
 
       const offset = offsetRef.current;
 
-      // --- persistence / phosphor: density of the raw I/Q trail (additive 'lighter' blend,
-      // so phases the tip dwells on glow brighter; recomputed each frame so it tracks the
-      // current scale/zero) ---
-      if (persistRef.current && trail.length > 1) {
-        ctx.globalCompositeOperation = "lighter";
-        ctx.globalAlpha = 0.1;
-        harmonics.forEach((harm, hi) => {
-          ctx.fillStyle = colorFor(hi);
-          for (let k = 0; k < trail.length; k++) {
-            const s = trail[k].harmonics[harm.id];
-            if (!s) continue;
-            const px = cx - (s.i - ox(harm.id)) * scale;
-            const py = cy - (s.q - oy(harm.id)) * scale;
-            ctx.fillRect(px - 0.6, py - 0.6, 1.2, 1.2);
-          }
-        });
-        ctx.globalCompositeOperation = "source-over";
-        ctx.globalAlpha = 1;
-      }
-
-      // --- colour overlay marking the demodulator phase offset (the grid stays unchanged) ---
-      drawOffsetOverlay(ctx, cx, cy, radius, offset);
-
-      // one live vector per harmonic, from centre to tip (the SERVICE2 view)
+      // --- ease each harmonic's displayed tip + compute its screen position ---
+      const tips: { id: string; color: string; x: number; y: number; di: number; dq: number }[] = [];
       harmonics.forEach((harm, hi) => {
         const s = latest?.harmonics[harm.id];
         if (!s) return;
-        const color = colorFor(hi);
         const ti = s.i - bx(harm.id);
         const tq = s.q - by(harm.id);
         // ease the displayed tip toward the target for smooth motion (EMA factor)
@@ -172,32 +154,70 @@ export function Hodograph({
         d.i += emaRef.current * (ti - d.i);
         d.q += emaRef.current * (tq - d.q);
         dispRef.current.set(harm.id, d);
-        const di = d.i;
-        const dq = d.q;
-        // X axis mirrored: ferrite / 0° sits on the LEFT (matches the device).
-        const x = cx - di * scale;
-        const y = cy - dq * scale;
+        // X axis mirrored: 0° sits on the LEFT (matches the device).
+        tips.push({
+          id: harm.id,
+          color: colorFor(hi),
+          x: cx - d.i * scale,
+          y: cy - d.q * scale,
+          di: d.i,
+          dq: d.q,
+        });
+      });
+
+      // --- persistence / phosphor: keep a bounded trail of recent on-screen tip positions
+      // and draw it with age-based alpha. Screen-space, so it stays exactly where the dot was
+      // (no drift with the auto-scale) and fades out cleanly as points age past TRAIL_LEN ---
+      for (const t of tips) {
+        let buf = screenTrail.get(t.id);
+        if (!buf) {
+          buf = [];
+          screenTrail.set(t.id, buf);
+        }
+        buf.push({ x: t.x, y: t.y });
+        if (buf.length > TRAIL_LEN) buf.splice(0, buf.length - TRAIL_LEN);
+      }
+      if (persistRef.current) {
+        harmonics.forEach((harm, hi) => {
+          const buf = screenTrail.get(harm.id);
+          if (!buf) return;
+          ctx.fillStyle = colorFor(hi);
+          const n = buf.length;
+          for (let k = 0; k < n; k++) {
+            ctx.globalAlpha = (k / n) * 0.85; // oldest ~0 (gone) -> newest brightest
+            const p = buf[k];
+            ctx.fillRect(p.x - 0.75, p.y - 0.75, 1.5, 1.5);
+          }
+        });
+        ctx.globalAlpha = 1;
+      }
+
+      // --- colour overlay marking the demodulator phase offset (the grid stays unchanged) ---
+      drawOffsetOverlay(ctx, cx, cy, radius, offset);
+
+      // --- one live vector per harmonic, from centre to tip (the SERVICE2 view) ---
+      for (const t of tips) {
         ctx.globalAlpha = 0.9;
-        ctx.strokeStyle = color;
+        ctx.strokeStyle = t.color;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(cx, cy);
-        ctx.lineTo(x, y);
+        ctx.lineTo(t.x, t.y);
         ctx.stroke();
         ctx.globalAlpha = 1;
-        ctx.fillStyle = color;
+        ctx.fillStyle = t.color;
         ctx.beginPath();
-        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.arc(t.x, t.y, 4, 0, Math.PI * 2);
         ctx.fill();
-        // raw I/Q demod phase of the delta, in degrees, on the tip (existing readout kept)
-        const deg = (Math.atan2(dq, di) * 180) / Math.PI;
+        // raw I/Q demod phase of the delta, in degrees, on the tip
+        const deg = (Math.atan2(t.dq, t.di) * 180) / Math.PI;
         ctx.font = "11px var(--font-geist-mono), monospace";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
-        ctx.fillText(`${harm.id} ${deg.toFixed(1)}°`, x + 7, y);
+        ctx.fillText(`${t.id} ${deg.toFixed(1)}°`, t.x + 7, t.y);
         ctx.textAlign = "start";
         ctx.textBaseline = "alphabetic";
-      });
+      }
 
       // --- offset caption (top-centre) ---
       ctx.globalAlpha = 1;
@@ -276,8 +296,21 @@ function drawGrid(
       ctx.fillStyle = "#8b98a9";
       ctx.font = "10px var(--font-geist-mono), monospace";
       ctx.fillText(`${lbl}°`, cx + dirx * radius * 0.83, cy + diry * radius * 0.83);
+
+      // VDI sub-scale on the upper half: phase 0 / 90 / 180 -> VDI -90 / 0 / +90
+      if (d <= 180) {
+        const vdi = d - 90;
+        ctx.fillStyle = VDI_COLOR;
+        ctx.font = "9px var(--font-geist-mono), monospace";
+        ctx.fillText(`${vdi > 0 ? "+" : ""}${vdi}`, cx + dirx * radius * 0.7, cy + diry * radius * 0.7);
+      }
     }
   }
+  // caption for the VDI sub-scale (near VDI 0, at the top)
+  ctx.fillStyle = VDI_COLOR;
+  ctx.font = "9px var(--font-geist-mono), monospace";
+  ctx.fillText("VDI", cx, cy - radius * 0.58);
+
   ctx.textAlign = "start";
   ctx.textBaseline = "alphabetic";
 

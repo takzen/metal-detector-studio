@@ -17,7 +17,7 @@ export interface PortInfo {
 }
 
 export interface SourceRequest {
-  source: "synthetic" | "serial";
+  source: "serial";
   profile: string;
   port?: string | null;
   baud?: number;

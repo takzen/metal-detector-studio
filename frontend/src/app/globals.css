@@ -32,3 +32,12 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
 }
+
+/* Tailwind v4 Preflight gives buttons the default arrow cursor; restore the pointer
+   (hand) on interactive controls so hovering a button/slider/select feels clickable. */
+button:not(:disabled),
+[role="button"],
+select:not(:disabled),
+input[type="range"]:not(:disabled) {
+  cursor: pointer;
+}
