@@ -5,22 +5,31 @@ import { colorFor } from "@/lib/palette";
 import type { FeatureFrame, Harmonic } from "@/lib/types";
 
 // Plots the device's delta vector (OX/OY = ground-tracked I/Q) directly: centre = the
-// device's zero, so zeroing on the detector recenters here automatically. One vector per
-// harmonic. Auto-scale grows fairly fast to fit a target and shrinks SLOWLY, so the view
-// doesn't jump/zoom into noise between passes. The "zero" button applies a manual offset.
+// device's zero, so the "zero" button (Enter/Z = zero the signal) recenters here. One
+// vector per harmonic. Auto-scale grows fairly fast to fit a target and shrinks SLOWLY,
+// so the view doesn't jump/zoom into noise between passes.
+//
+// `offsetDeg` is a demodulator phase offset: it adds a COLOUR overlay on top of the fixed
+// screen grid (the coordinate system itself is unchanged), marking the offset's zero
+// direction and how far it is rotated. It is a view transform only — it does not touch the
+// raw telemetry, the angle readouts, or the ground balance.
 const PEAK_RISE = 0.08; // scale grows toward larger signals
 const PEAK_FALL = 0.01; // ...and shrinks slowly (stable, no jitter)
 const NOISE_FLOOR_K = 10; // idle floor = K x noise level -> noise stays a small dot
 const ABS_FLOOR = 1; // never divide by ~0
 
+const OFFSET_COLOR = "#22d3ee"; // colour overlay marking the demodulator phase offset
+
 export function Hodograph({
   trailRef,
   harmonics,
   zeroSignal = 0,
+  offsetDeg = 0,
 }: {
   trailRef: React.RefObject<FeatureFrame[]>;
   harmonics: Harmonic[];
   zeroSignal?: number;
+  offsetDeg?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const peakRef = useRef(1);
@@ -30,7 +39,7 @@ export function Hodograph({
   const lastSeqRef = useRef(-1);
   const zeroPendingRef = useRef(false);
 
-  // manual "zero": snap the offset to the current sample whenever zeroSignal bumps
+  // manual "zero" (zero the signal): snap the offset to the current sample on each bump
   useEffect(() => {
     if (zeroSignal > 0) zeroPendingRef.current = true;
   }, [zeroSignal]);
@@ -73,7 +82,7 @@ export function Hodograph({
 
       const latest = trail[trail.length - 1];
 
-      // --- manual zero: snap the offset to the current sample ---
+      // --- manual zero (signal zero): snap the offset to the current sample ---
       if (zeroPendingRef.current && latest) {
         zeroPendingRef.current = false;
         for (const harm of harmonics) {
@@ -111,6 +120,9 @@ export function Hodograph({
 
       drawGrid(ctx, cx, cy, radius, peak);
 
+      // --- colour overlay marking the demodulator phase offset (the grid stays unchanged) ---
+      drawOffsetOverlay(ctx, cx, cy, radius, offsetDeg);
+
       // one live vector per harmonic, from centre to tip (the SERVICE2 view)
       harmonics.forEach((harm, hi) => {
         const s = latest?.harmonics[harm.id];
@@ -140,7 +152,7 @@ export function Hodograph({
         ctx.beginPath();
         ctx.arc(x, y, 4, 0, Math.PI * 2);
         ctx.fill();
-        // true I/Q demod phase of the delta, in degrees, on the tip
+        // raw I/Q demod phase of the delta, in degrees, on the tip (existing readout kept)
         const deg = (Math.atan2(dq, di) * 180) / Math.PI;
         ctx.font = "11px var(--font-geist-mono), monospace";
         ctx.textAlign = "left";
@@ -149,6 +161,17 @@ export function Hodograph({
         ctx.textAlign = "start";
         ctx.textBaseline = "alphabetic";
       });
+
+      // --- offset caption (top-centre) ---
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = offsetDeg === 0 ? "#5b6675" : OFFSET_COLOR;
+      ctx.font = "bold 12px var(--font-geist-mono), monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(`offset ${offsetDeg >= 0 ? "+" : ""}${offsetDeg.toFixed(1)}°`, cx, 8);
+      ctx.textAlign = "start";
+      ctx.textBaseline = "alphabetic";
+
       ctx.restore();
     };
     af = requestAnimationFrame(draw);
@@ -157,7 +180,7 @@ export function Hodograph({
       cancelAnimationFrame(af);
       ro.disconnect();
     };
-  }, [trailRef, harmonics]);
+  }, [trailRef, harmonics, offsetDeg]);
 
   return <canvas ref={canvasRef} className="h-full w-full" />;
 }
@@ -185,7 +208,7 @@ function drawGrid(
   ctx.lineTo(cx, cy + radius);
   ctx.stroke();
 
-  // --- degree protractor: I/Q demod phase atan2(Q,I); mirrored X (0° = ferrite, left) ---
+  // --- fixed degree protractor (raw screen phase): atan2(Q,I), mirrored X (0° left) ---
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (let d = 0; d < 360; d += 15) {
@@ -224,4 +247,60 @@ function drawGrid(
   ctx.fillStyle = "#8b98a9";
   ctx.font = "10px var(--font-geist-mono), monospace";
   ctx.fillText(`full-scale ${Math.round(peak)}`, cx + 4, cy - radius + 12);
+}
+
+// Screen direction for phase `deg` — mirrored X so 0° (ferrite) sits on the LEFT, matching
+// the protractor and the live vector mapping.
+function phaseDir(deg: number): { x: number; y: number } {
+  const a = (deg * Math.PI) / 180;
+  return { x: -Math.cos(a), y: -Math.sin(a) };
+}
+
+// Colour overlay for the demodulator phase offset: the offset axis is a full DIAMETER (a
+// 0°–180° line through the centre, since a phase axis spans 180°), drawn at the offset angle,
+// plus a faint wedge + rim arc at BOTH ends showing how far it is rotated off the horizontal.
+// The underlying coordinate grid is left untouched — this is only colour on top.
+function drawOffsetOverlay(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  offsetDeg: number,
+) {
+  const toCanvas = (deg: number) => ((deg + 180) * Math.PI) / 180;
+
+  // rotation wedge + rim arc at both ends of the axis (0° end and 180° end)
+  if (offsetDeg !== 0) {
+    for (const base of [0, 180]) {
+      const a = Math.min(base, base + offsetDeg);
+      const b = Math.max(base, base + offsetDeg);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, radius, toCanvas(a), toCanvas(b), false);
+      ctx.closePath();
+      ctx.fillStyle = OFFSET_COLOR;
+      ctx.globalAlpha = 0.1;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 0.97, toCanvas(a), toCanvas(b), false);
+      ctx.strokeStyle = OFFSET_COLOR;
+      ctx.globalAlpha = 0.8;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+  }
+
+  // offset axis: full diameter through the centre at the offset angle
+  const dir = phaseDir(offsetDeg);
+  ctx.strokeStyle = OFFSET_COLOR;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.95;
+  ctx.beginPath();
+  ctx.moveTo(cx + dir.x * radius, cy + dir.y * radius);
+  ctx.lineTo(cx - dir.x * radius, cy - dir.y * radius);
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
 }

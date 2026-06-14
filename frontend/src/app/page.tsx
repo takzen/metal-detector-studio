@@ -15,6 +15,7 @@ import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 
 const DEG = 180 / Math.PI;
 const fmt = (n: number, d = 1) => n.toFixed(d);
+const clamp180 = (d: number) => Math.max(-180, Math.min(180, d));
 
 type TabId = "hodograph" | "scope" | "fft" | "dsp" | "control";
 const TABS: { id: TabId; label: string }[] = [
@@ -87,6 +88,7 @@ export default function Home() {
   const [recMs, setRecMs] = useState(2000); // DSP recorder window
   const [recActive, setRecActive] = useState<Set<string>>(new Set(["audio", "threshold"]));
   const [dspMode, setDspMode] = useState<"live" | "theory">("live");
+  const [offsetDeg, setOffsetDeg] = useState(0); // demodulator phase offset (colour overlay)
 
   const recChannels = useMemo<RecChannel[]>(
     () => [
@@ -171,9 +173,7 @@ export default function Home() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="flex flex-col">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm font-medium text-muted">
-                  XY hodograph — delta vs ground
-                </h2>
+                <h2 className="text-sm font-medium text-muted">XY hodograph</h2>
                 <div className="flex flex-wrap items-center gap-3">
                   <button
                     onClick={() => setZeroNonce((n) => n + 1)}
@@ -182,6 +182,30 @@ export default function Home() {
                   >
                     zero (Enter)
                   </button>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] uppercase tracking-wide text-muted">offset</span>
+                    <span className="w-12 text-right font-mono text-xs tabular-nums text-foreground">
+                      {offsetDeg >= 0 ? "+" : ""}
+                      {offsetDeg.toFixed(1)}°
+                    </span>
+                    {[-0.3, 0.3].map((d) => (
+                      <button
+                        key={d}
+                        onClick={() => setOffsetDeg((v) => clamp180(Number((v + d).toFixed(1))))}
+                        title="demodulator phase offset — colour overlay (the grid stays unchanged)"
+                        className="rounded border border-border px-1.5 py-0.5 text-xs tabular-nums text-muted hover:text-foreground"
+                      >
+                        {d > 0 ? `+${d}` : d}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => setOffsetDeg(0)}
+                      title="reset offset to 0°"
+                      className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
+                    >
+                      0
+                    </button>
+                  </div>
                   {profile?.harmonics.map((h, i) => (
                     <span key={h.id} className="inline-flex items-center gap-1.5 text-xs">
                       <span
@@ -199,6 +223,7 @@ export default function Home() {
                     trailRef={t.trailRef}
                     harmonics={profile.harmonics}
                     zeroSignal={zeroNonce}
+                    offsetDeg={offsetDeg}
                   />
                 )}
                 {/* large, readable phase-angle readout (smoothed) */}
