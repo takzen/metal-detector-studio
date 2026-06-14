@@ -1,8 +1,7 @@
 """Telemetry source interface (Milestone B3).
 
-A source produces telemetry packets for a given device profile. The synthetic
-source (no hardware) and the serial source (USB-CDC, later) implement the same
-contract, so the server treats them interchangeably.
+A source produces telemetry packets for a given device profile. The serial source
+(real USB-CDC hardware) implements this contract; the server is source-agnostic.
 """
 
 from __future__ import annotations

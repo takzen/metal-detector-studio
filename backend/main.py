@@ -2,8 +2,8 @@
 
     cd backend && uv run python main.py
 
-Config via env: METAL_LAB_PROFILE (default spectral_g4), METAL_LAB_SOURCE
-(synthetic|serial), METAL_LAB_HOST, METAL_LAB_PORT.
+Config via env: METAL_LAB_PROFILE (default spectral_g4), METAL_LAB_SERIAL_PORT
+(e.g. COM5), METAL_LAB_HOST, METAL_LAB_PORT.
 """
 
 import logging

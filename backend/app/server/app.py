@@ -24,7 +24,6 @@ from .. import config
 from ..profiles import list_profiles, load_profile, load_schema
 from ..sources.base import TelemetrySource
 from ..sources.serial import SerialSource
-from ..sources.synthetic import SyntheticSource
 from ..telemetry.models import ConfigAck, ConfigCommand, Hello
 from .hub import ClientHandle, Hub
 
@@ -32,15 +31,13 @@ log = logging.getLogger("metal_lab")
 
 
 class SourceRequest(BaseModel):
-    source: str  # "synthetic" | "serial"
+    source: str  # "serial" (only real hardware is supported)
     profile: str
     port: str | None = None
     baud: int = 115200
 
 
 def _make_source(source_kind: str, profile, port: str, baud: int) -> TelemetrySource:
-    if source_kind == "synthetic":
-        return SyntheticSource(profile)
     if source_kind == "serial":
         return SerialSource(profile, port, baud)
     raise ValueError(f"unsupported source {source_kind!r}")
@@ -158,8 +155,8 @@ def create_app() -> FastAPI:
 
     @app.post("/api/source")
     async def set_source(req: SourceRequest) -> dict:
-        if req.source not in ("synthetic", "serial"):
-            raise HTTPException(400, f"unknown source {req.source!r}")
+        if req.source != "serial":
+            raise HTTPException(400, f"unsupported source {req.source!r}; only 'serial' is available")
         if req.profile not in list_profiles():
             raise HTTPException(400, f"unknown profile {req.profile!r}")
         if req.source == "serial" and not req.port:
