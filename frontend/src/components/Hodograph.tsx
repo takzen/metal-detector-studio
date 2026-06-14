@@ -25,11 +25,15 @@ export function Hodograph({
   harmonics,
   zeroSignal = 0,
   offsetDeg = 0,
+  ema = 0.3,
+  persistence = true,
 }: {
   trailRef: React.RefObject<FeatureFrame[]>;
   harmonics: Harmonic[];
   zeroSignal?: number;
   offsetDeg?: number;
+  ema?: number; // live-vector smoothing factor (0..1): lower = smoother, higher = faster
+  persistence?: boolean; // phosphor density trail of the raw I/Q samples
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const peakRef = useRef(1);
@@ -38,6 +42,17 @@ export function Hodograph({
   const dispRef = useRef<Map<string, { i: number; q: number }>>(new Map()); // eased tip
   const lastSeqRef = useRef(-1);
   const zeroPendingRef = useRef(false);
+
+  // live-tunable controls read inside the rAF loop (kept in refs so changing them does not
+  // tear down and restart the animation loop on every slider tick)
+  const offsetRef = useRef(offsetDeg);
+  const emaRef = useRef(ema);
+  const persistRef = useRef(persistence);
+  useEffect(() => {
+    offsetRef.current = offsetDeg;
+    emaRef.current = ema;
+    persistRef.current = persistence;
+  }, [offsetDeg, ema, persistence]);
 
   // manual "zero" (zero the signal): snap the offset to the current sample on each bump
   useEffect(() => {
@@ -120,8 +135,30 @@ export function Hodograph({
 
       drawGrid(ctx, cx, cy, radius, peak);
 
+      const offset = offsetRef.current;
+
+      // --- persistence / phosphor: density of the raw I/Q trail (additive 'lighter' blend,
+      // so phases the tip dwells on glow brighter; recomputed each frame so it tracks the
+      // current scale/zero) ---
+      if (persistRef.current && trail.length > 1) {
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = 0.1;
+        harmonics.forEach((harm, hi) => {
+          ctx.fillStyle = colorFor(hi);
+          for (let k = 0; k < trail.length; k++) {
+            const s = trail[k].harmonics[harm.id];
+            if (!s) continue;
+            const px = cx - (s.i - ox(harm.id)) * scale;
+            const py = cy - (s.q - oy(harm.id)) * scale;
+            ctx.fillRect(px - 0.6, py - 0.6, 1.2, 1.2);
+          }
+        });
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1;
+      }
+
       // --- colour overlay marking the demodulator phase offset (the grid stays unchanged) ---
-      drawOffsetOverlay(ctx, cx, cy, radius, offsetDeg);
+      drawOffsetOverlay(ctx, cx, cy, radius, offset);
 
       // one live vector per harmonic, from centre to tip (the SERVICE2 view)
       harmonics.forEach((harm, hi) => {
@@ -130,10 +167,10 @@ export function Hodograph({
         const color = colorFor(hi);
         const ti = s.i - bx(harm.id);
         const tq = s.q - by(harm.id);
-        // ease the displayed tip toward the target for smooth motion
+        // ease the displayed tip toward the target for smooth motion (EMA factor)
         const d = dispRef.current.get(harm.id) ?? { i: ti, q: tq };
-        d.i += 0.3 * (ti - d.i);
-        d.q += 0.3 * (tq - d.q);
+        d.i += emaRef.current * (ti - d.i);
+        d.q += emaRef.current * (tq - d.q);
         dispRef.current.set(harm.id, d);
         const di = d.i;
         const dq = d.q;
@@ -164,11 +201,11 @@ export function Hodograph({
 
       // --- offset caption (top-centre) ---
       ctx.globalAlpha = 1;
-      ctx.fillStyle = offsetDeg === 0 ? "#5b6675" : OFFSET_COLOR;
+      ctx.fillStyle = offset === 0 ? "#5b6675" : OFFSET_COLOR;
       ctx.font = "bold 12px var(--font-geist-mono), monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      ctx.fillText(`offset ${offsetDeg >= 0 ? "+" : ""}${offsetDeg.toFixed(1)}°`, cx, 8);
+      ctx.fillText(`offset ${offset >= 0 ? "+" : ""}${offset.toFixed(1)}°`, cx, 8);
       ctx.textAlign = "start";
       ctx.textBaseline = "alphabetic";
 
@@ -180,7 +217,7 @@ export function Hodograph({
       cancelAnimationFrame(af);
       ro.disconnect();
     };
-  }, [trailRef, harmonics, offsetDeg]);
+  }, [trailRef, harmonics]);
 
   return <canvas ref={canvasRef} className="h-full w-full" />;
 }

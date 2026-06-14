@@ -89,6 +89,8 @@ export default function Home() {
   const [recActive, setRecActive] = useState<Set<string>>(new Set(["audio", "threshold"]));
   const [dspMode, setDspMode] = useState<"live" | "theory">("live");
   const [offsetDeg, setOffsetDeg] = useState(0); // demodulator phase offset (colour overlay)
+  const [persistence, setPersistence] = useState(true); // hodograph phosphor trail
+  const [ema, setEma] = useState(0.3); // hodograph live-vector smoothing factor
 
   const recChannels = useMemo<RecChannel[]>(
     () => [
@@ -206,6 +208,33 @@ export default function Home() {
                       0
                     </button>
                   </div>
+                  <button
+                    onClick={() => setPersistence((v) => !v)}
+                    title="persistence / phosphor: density trail of the raw I/Q samples"
+                    className={`rounded border px-2 py-0.5 text-xs transition-colors ${
+                      persistence
+                        ? "border-accent text-foreground"
+                        : "border-border text-muted hover:text-foreground"
+                    }`}
+                  >
+                    persist
+                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] uppercase tracking-wide text-muted">EMA</span>
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      value={ema}
+                      onChange={(e) => setEma(Number(e.target.value))}
+                      title="live-vector smoothing: lower = smoother/slower, higher = faster"
+                      className="w-24 accent-[#22d3ee]"
+                    />
+                    <span className="w-9 text-right font-mono text-xs tabular-nums text-foreground">
+                      {ema.toFixed(2)}
+                    </span>
+                  </div>
                   {profile?.harmonics.map((h, i) => (
                     <span key={h.id} className="inline-flex items-center gap-1.5 text-xs">
                       <span
@@ -224,6 +253,8 @@ export default function Home() {
                     harmonics={profile.harmonics}
                     zeroSignal={zeroNonce}
                     offsetDeg={offsetDeg}
+                    ema={ema}
+                    persistence={persistence}
                   />
                 )}
                 {/* large, readable phase-angle readout (smoothed) */}
