@@ -59,9 +59,12 @@ flowchart TD
   span and a peak marker — environmental EMI monitoring to pick clean working bands.
 - **DSP Analyzer:** a multi-channel strip-chart recorder — each signal on its own lane
   (per-channel auto, lock, or fixed scale): **audio** (the signal-strength indicator) with the
-  **threshold** floor overlaid on the same 0..4000 scale, plus **ground** (post-correction
-  baseline) — to watch the detection chain over time; plus a theoretical **filter lab**
-  (EMA / band-pass impulse + frequency response, −3 dB estimate) mirroring the firmware DSP.
+  **threshold** floor overlaid on the same 0..4000 scale, **ground** (post-correction
+  baseline), and **I/Q after the active mode's filters** (DEEP/DISC/PROS each use different
+  filters) on separate axes — to watch the detection chain over time. Smooth wall-clock
+  scrolling plus a **play/stop** freeze for static inspection; tap the coil for an impulse to
+  see the filter response. Plus a theoretical **filter lab** (EMA / band-pass impulse +
+  frequency response, −3 dB estimate) mirroring the firmware DSP.
 - **Dynamic, profile-driven mapping:** a device-agnostic JSON contract
   (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
   firmware without PC rewrites. Profile and serial port are switchable live from the
