@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FilterLab } from "@/components/FilterLab";
 import { Hodograph } from "@/components/Hodograph";
-import { IQScope } from "@/components/IQScope";
+import { IQScope, type TrigMode, type TrigSrc } from "@/components/IQScope";
 import { IQSpectrum } from "@/components/IQSpectrum";
 import { Recorder, type RecChannel } from "@/components/Recorder";
 import { Scope } from "@/components/Scope";
@@ -85,6 +85,11 @@ export default function Home() {
   const [scopeRun, setScopeRun] = useState(true); // run / hold
   const [scopeYAuto, setScopeYAuto] = useState(true);
   const [scopeYScale, setScopeYScale] = useState(8000); // manual vertical full-scale
+  const [trigMode, setTrigMode] = useState<TrigMode>("off"); // off = free-running roll
+  const [trigSrc, setTrigSrc] = useState<TrigSrc>("mag"); // |IQ| rising = target approach
+  const [trigEdge, setTrigEdge] = useState<"rising" | "falling">("rising");
+  const [trigLevel, setTrigLevel] = useState<number | "auto">("auto"); // "auto" = above-noise; number = manual raw (draggable)
+  const [scopeArmNonce, setScopeArmNonce] = useState(0); // bump to (re)arm single-shot
   const [fftSpan, setFftSpan] = useState<number | "full">("full"); // FFT frequency span [Hz]
   const [recMs, setRecMs] = useState(2000); // DSP recorder window
   const [recActive, setRecActive] = useState<Set<string>>(new Set(["audio", "threshold"]));
@@ -359,7 +364,7 @@ export default function Home() {
         {tab === "scope" && (
           <Card>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-medium text-muted">Virtual oscilloscope — raw RX</h2>
+              <h2 className="text-sm font-medium text-muted">Virtual oscilloscope — {t.hasIq ? "demod I/Q" : "raw RX"}</h2>
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-1">
                   <span className="text-[11px] uppercase tracking-wide text-muted">time</span>
@@ -397,10 +402,13 @@ export default function Home() {
                   >
                     −
                   </button>
+                  <span className="w-16 text-[11px] tabular-nums text-muted">
+                    {scopeYAuto ? "auto" : `±${scopeYScale >= 1000 ? (scopeYScale / 1000).toFixed(1) + "k" : scopeYScale}`}
+                  </span>
                 </div>
                 <button
                   onClick={() => setScopeRun((v) => !v)}
-                  className={`rounded border px-2 py-0.5 text-xs transition-colors ${
+                  className={`w-20 shrink-0 rounded border px-2 py-0.5 text-center text-xs transition-colors ${
                     scopeRun ? "border-border text-muted hover:text-foreground" : "border-amber-500 text-amber-400"
                   }`}
                 >
@@ -408,15 +416,90 @@ export default function Home() {
                 </button>
               </div>
             </div>
+            <div className="mb-3 flex flex-wrap items-center gap-3 border-t border-border pt-3">
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] uppercase tracking-wide text-muted">trig</span>
+                {(["off", "auto", "normal", "single"] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => {
+                      setTrigMode(m);
+                      if (m === "single") setScopeArmNonce((n) => n + 1);
+                    }}
+                    className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
+                      trigMode === m ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {m === "normal" ? "norm" : m}
+                  </button>
+                ))}
+              </div>
+              {trigMode !== "off" && (
+                <>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] uppercase tracking-wide text-muted">src</span>
+                    {(["I", "Q", "mag"] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setTrigSrc(s)}
+                        className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
+                          trigSrc === s ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                        }`}
+                      >
+                        {s === "mag" ? "|IQ|" : s}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] uppercase tracking-wide text-muted">edge</span>
+                    <button
+                      onClick={() => setTrigEdge((e) => (e === "rising" ? "falling" : "rising"))}
+                      className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:text-foreground"
+                      title="toggle trigger edge (rising / falling)"
+                    >
+                      {trigEdge === "rising" ? "↑ rise" : "↓ fall"}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] uppercase tracking-wide text-muted">lvl</span>
+                    <button
+                      onClick={() => setTrigLevel("auto")}
+                      className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
+                        trigLevel === "auto" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+                      }`}
+                    >
+                      auto
+                    </button>
+                    <span className="text-[11px] tabular-nums text-muted">
+                      {trigLevel === "auto" ? "↕ drag line" : `man ${Math.round(trigLevel)}`}
+                    </span>
+                  </div>
+                  {trigMode === "single" && (
+                    <button
+                      onClick={() => setScopeArmNonce((n) => n + 1)}
+                      className="rounded border border-blue-500 px-2 py-0.5 text-xs text-blue-400 hover:text-blue-300"
+                      title="re-arm single-shot capture"
+                    >
+                      ↻ arm
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
             <div className="h-[28rem] w-full">
               {t.hasIq ? (
                 <IQScope
                   iRef={t.iqIRef}
                   qRef={t.iqQRef}
                   fsRef={t.iqFsRef}
+                  countRef={t.iqCountRef}
                   windowMs={scopeMs}
                   running={scopeRun}
                   yScale={scopeYAuto ? "auto" : scopeYScale}
+                  trig={{ mode: trigMode, src: trigSrc, edge: trigEdge }}
+                  level={trigLevel}
+                  onLevelChange={(raw) => setTrigLevel(raw)}
+                  armNonce={scopeArmNonce}
                 />
               ) : profile && raw ? (
                 <Scope

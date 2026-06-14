@@ -50,8 +50,11 @@ flowchart TD
   upper half maps phase 0 / 90 / 180° to −90 / 0 / +90, shown on the dial and as a large
   top-right readout mirroring the phase angle (top-left).
 - **Virtual Oscilloscope:** real-time time-domain plot with timebase (50 ms–2 s),
-  auto/manual vertical scale, and run/hold. Shows the raw ADC RX block where available, or
-  the demodulated I/Q channels for devices that only stream processed vectors (e.g. TAKTYK).
+  auto/manual vertical scale, and run/hold. A **sweep trigger** (auto / normal / single-shot,
+  source I / Q / |IQ|, rising or falling edge, auto-placed or draggable level line) holds a
+  stable waveform and captures one-shot target passes, alongside a fixed-position **measurements**
+  overlay (Vpp, RMS, mean, frequency per I/Q). Shows the demodulated I/Q channels for devices that
+  stream processed vectors (e.g. TAKTYK), or the raw ADC RX block where available.
 - **Live FFT (Spectrum Analyzer):** Hann-windowed dBFS spectrum with selectable frequency
   span and a peak marker — environmental EMI monitoring to pick clean working bands.
 - **DSP / SAT Analyzer:** a multi-channel strip-chart recorder (audio vs SAT threshold,

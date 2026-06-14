@@ -15,7 +15,7 @@ import type {
 export type ConnStatus = "connecting" | "open" | "closed";
 
 const TRAIL_MAX = 2048; // recent feature frames kept for the hodograph trail
-const IQ_MAX = 2000; // rolling 1 kHz I/Q sample buffer (~2 s) for scope/FFT
+const IQ_MAX = 4096; // rolling 1 kHz I/Q buffer (~4 s) — scope/FFT + trigger pre/post room
 
 export interface Telemetry {
   status: ConnStatus;
@@ -32,6 +32,8 @@ export interface Telemetry {
   iqIRef: React.RefObject<number[]>;
   iqQRef: React.RefObject<number[]>;
   iqFsRef: React.RefObject<number>;
+  /** Total I/Q samples ever received — absolute index for the scope trigger. */
+  iqCountRef: React.RefObject<number>;
   hasIq: boolean;
   stats: { featureHz: number; rawHz: number; lastAck: ConfigAck | null };
   sendConfig: (key: string, value: unknown) => void;
@@ -58,6 +60,7 @@ export function useTelemetry(): Telemetry {
   const iqIRef = useRef<number[]>([]);
   const iqQRef = useRef<number[]>([]);
   const iqFsRef = useRef<number>(1000);
+  const iqCountRef = useRef<number>(0);
   // EMA-smoothed values for the (slow, readable) numeric readouts
   const featSmoothRef = useRef<{
     i: Record<string, number>;
@@ -107,6 +110,7 @@ export function useTelemetry(): Telemetry {
             trailRef.current = [];
             iqIRef.current = [];
             iqQRef.current = [];
+            iqCountRef.current = 0;
             featSmoothRef.current = null;
             setHasIq(false);
             break;
@@ -149,6 +153,7 @@ export function useTelemetry(): Telemetry {
             }
             if (bi.length > IQ_MAX) bi.splice(0, bi.length - IQ_MAX);
             if (bq.length > IQ_MAX) bq.splice(0, bq.length - IQ_MAX);
+            iqCountRef.current += b.i.length;
             rawTimes.current.push(performance.now());
             setHasIq(true); // no-op once already true
             break;
@@ -235,6 +240,7 @@ export function useTelemetry(): Telemetry {
     iqIRef,
     iqQRef,
     iqFsRef,
+    iqCountRef,
     hasIq,
     stats,
     sendConfig,
