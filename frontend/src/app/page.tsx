@@ -16,7 +16,7 @@ import { usePersistentState } from "@/lib/usePersistentState";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 
 const DEG = 180 / Math.PI;
-const VERSION = "v0.5.0-beta";
+const VERSION = "v0.6.0-beta";
 const fmt = (n: number, d = 1) => n.toFixed(d);
 const clamp180 = (d: number) => Math.max(-180, Math.min(180, d));
 const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;

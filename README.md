@@ -66,8 +66,10 @@ flowchart TD
   baseline), and **I/Q after the active mode's filters** (DEEP/DISC/PROS each use different
   filters) on separate axes — to watch the detection chain over time. Smooth wall-clock
   scrolling plus a **play/stop** freeze for static inspection; tap the coil for an impulse to
-  see the filter response. Plus a theoretical **filter lab** (EMA / band-pass impulse +
-  frequency response, −3 dB estimate) mirroring the firmware DSP.
+  see the filter response. Plus a **filter lab** that previews the *actual* firmware filters
+  (DEEP/PIN/PROS 2-pole LP, DISC biquad with real Q29 coeffs, baseline/motion/ground EMA
+  trackers, DEEP/PROS SAT tables) — impulse + frequency response, live coefficients, metrics
+  (−3/−6 dB, settling time, overshoot) and a hover cursor readout.
 - **Dynamic, profile-driven mapping:** a device-agnostic JSON contract
   (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
   firmware without PC rewrites. Profile and serial port are switchable live from the
@@ -76,7 +78,7 @@ flowchart TD
   (parameter label vs. clickable choice), and UI settings (active tab, scope timebase,
   trigger, FFT span/window/dB/avg/view, recorder window/channels, hodograph offset/EMA)
   persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`4` tabs, `Enter`/`Z`
-  zero, `Space` run/hold) and per-chart fullscreen (`⛶`).
+  zero, `Space` run/hold), per-chart fullscreen (`⛶`) and PNG export.
 - **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
   coding assistants (read frames, analyze phase/spectrum, push config).
 
