@@ -893,7 +893,7 @@ export default function Home() {
                 </>
               )}
               <div className="ml-auto flex items-center gap-1">
-                {dspMode === "live" && <PngBtn name="recorder" />}
+                <PngBtn name={dspMode === "live" ? "recorder" : "filter-lab"} />
                 <MaxBtn />
               </div>
             </div>
