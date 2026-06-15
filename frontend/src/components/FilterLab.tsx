@@ -3,20 +3,46 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import uPlot from "uplot";
 
-// Theoretical analysis of the firmware DSP filters (dsp/filters.h):
-//  - one-pole EMA:      s += a*(x-s),         a = 1/2^shift
-//  - band-pass pair:    s1=EMA(x,a1); bp = 2*(s1 - s2_prev); s2=EMA(s1,a2)
-// We simulate the impulse response and evaluate the frequency response by DFT.
+// Analysis of the real firmware DSP filters (taktyk-dsp src/dsp/*, src/modes/*).
+// The per-sample mode steps run at ~1 kHz, so that is the design sample rate.
+//   - one-pole EMA:        s += a*(x-s),  a = 1/2^shift          (filters.h ema_t)
+//   - alpha EMA (SAT):     s += a*(x-s),  a = alphaQ15/2^15      (filters.h ema_a_t)
+//   - 2-pole LP:           two cascaded EMA (DEEP/PIN/PROS lp -> lp2)
+//   - band-pass pair:      s1=EMA(x); bp=2*(s1-s2_prev); s2=EMA(s1)  (filters.h bp_pair)
+//   - DISC LP:             2nd-order biquad, Q29 coeffs            (biquad.h, mode_dynamic)
+// Impulse response is simulated, the frequency response evaluated by DFT.
 
 const M = 512; // impulse-response length (samples)
+const Q29 = 2 ** 29;
+
+// Real DISC low-pass biquad coefficients (Q29) from mode_dynamic.c BP_LPF[].
+const DISC_BIQUAD = { b0: 977174, b1: 1954348, b2: 977174, a1: -1007033236, a2: 474071020 };
+
+// Real PROS variable-SAT alpha table (Q15), levels 1..20, from mode_pros.c.
+const PROS_SAT_ALPHA = [
+  13, 16, 21, 27, 34, 44, 56, 72, 92, 118, 151, 193, 247, 316, 404, 517, 661, 846, 950, 999,
+];
+
+type Kind = "ema" | "lp2" | "bp" | "biquad" | "sat";
 
 function emaImpulse(a: number): number[] {
   const h = new Array<number>(M);
   let s = 0;
   for (let n = 0; n < M; n++) {
-    const x = n === 0 ? 1 : 0;
-    s += a * (x - s);
+    s += a * ((n === 0 ? 1 : 0) - s);
     h[n] = s;
+  }
+  return h;
+}
+
+function lp2Impulse(a: number): number[] {
+  const h = new Array<number>(M);
+  let s1 = 0;
+  let s2 = 0;
+  for (let n = 0; n < M; n++) {
+    s1 += a * ((n === 0 ? 1 : 0) - s1);
+    s2 += a * (s1 - s2);
+    h[n] = s2;
   }
   return h;
 }
@@ -26,11 +52,27 @@ function bpImpulse(a1: number, a2: number): number[] {
   let s1 = 0;
   let s2 = 0;
   for (let n = 0; n < M; n++) {
-    const x = n === 0 ? 1 : 0;
-    s1 += a1 * (x - s1);
-    const s2old = s2;
-    h[n] = 2 * (s1 - s2old);
+    s1 += a1 * ((n === 0 ? 1 : 0) - s1);
+    h[n] = 2 * (s1 - s2);
     s2 += a2 * (s1 - s2);
+  }
+  return h;
+}
+
+function biquadImpulse(b0: number, b1: number, b2: number, a1: number, a2: number): number[] {
+  const h = new Array<number>(M);
+  let x1 = 0;
+  let x2 = 0;
+  let y1 = 0;
+  let y2 = 0;
+  for (let n = 0; n < M; n++) {
+    const x = n === 0 ? 1 : 0;
+    const y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    h[n] = y;
+    x2 = x1;
+    x1 = x;
+    y2 = y1;
+    y1 = y;
   }
   return h;
 }
@@ -38,8 +80,8 @@ function bpImpulse(a1: number, a2: number): number[] {
 function freqResponseDb(h: number[], fs: number, nf = 256): { f: number[]; db: number[] } {
   const f = new Array<number>(nf);
   const db = new Array<number>(nf);
-  let maxMag = 1e-12;
   const mags = new Array<number>(nf);
+  let maxMag = 1e-12;
   for (let k = 0; k < nf; k++) {
     const freq = (k / (nf - 1)) * (fs / 2);
     f[k] = freq;
@@ -55,6 +97,32 @@ function freqResponseDb(h: number[], fs: number, nf = 256): { f: number[]; db: n
   }
   for (let k = 0; k < nf; k++) db[k] = 20 * Math.log10(mags[k] / maxMag + 1e-9);
   return { f, db };
+}
+
+/** Highest frequency at which the (normalised) response is still >= thr dB. */
+function cutoff(fr: { f: number[]; db: number[] }, thr: number): number {
+  let fc = 0;
+  for (let k = 0; k < fr.db.length; k++) if (fr.db[k] >= thr) fc = fr.f[k];
+  return fc;
+}
+
+/** Step response = cumulative sum of the impulse response. */
+function stepMetrics(h: number[], fs: number): { settlingMs: number | null; overshootPct: number | null } {
+  const step = new Array<number>(h.length);
+  let acc = 0;
+  let peak = -Infinity;
+  for (let n = 0; n < h.length; n++) {
+    acc += h[n];
+    step[n] = acc;
+    if (acc > peak) peak = acc;
+  }
+  const final = step[step.length - 1];
+  if (Math.abs(final) < 1e-6) return { settlingMs: null, overshootPct: null }; // band-pass: returns to 0
+  const overshootPct = Math.max(0, ((peak - final) / Math.abs(final)) * 100);
+  const band = 0.02 * Math.abs(final); // ±2% settling band
+  let settleIdx = 0;
+  for (let n = 0; n < step.length; n++) if (Math.abs(step[n] - final) > band) settleIdx = n;
+  return { settlingMs: ((settleIdx + 1) / fs) * 1000, overshootPct };
 }
 
 function makePlot(
@@ -79,29 +147,65 @@ function makePlot(
   return new uPlot(opts, [[]] as unknown as uPlot.AlignedData, host);
 }
 
+// Real firmware filters, selectable as presets.
+const PRESETS: { id: string; label: string; kind: Kind; shift1?: number; shift2?: number; sat?: number; note: string }[] = [
+  { id: "deep", label: "DEEP / PIN / PROS LP", kind: "lp2", shift1: 5, note: "2-pole EMA cascade, shift 5 (lp → lp2)" },
+  { id: "disc", label: "DISC LP", kind: "biquad", note: "2nd-order Butterworth biquad (Q29)" },
+  { id: "bp", label: "MXT band-pass", kind: "bp", shift1: 3, shift2: 3, note: "EMA pair, shift 3 / 3 — bp = 2·(s1−s2)" },
+  { id: "delta", label: "MXT δ (EMA s3)", kind: "ema", shift1: 3, note: "single-pole EMA, shift 3" },
+  { id: "sat", label: "SAT / VSAT", kind: "sat", sat: 10, note: "variable-α self-tune (PROS_SAT_ALPHA)" },
+];
+
 export function FilterLab() {
-  const [type, setType] = useState<"ema" | "bp">("ema");
+  const [kind, setKind] = useState<Kind>("lp2");
   const [shift1, setShift1] = useState(5);
-  const [shift2, setShift2] = useState(7);
+  const [shift2, setShift2] = useState(3);
+  const [satLevel, setSatLevel] = useState(10); // 1..20
   const [fs, setFs] = useState(1000);
 
-  const { impData, frData, fc } = useMemo(() => {
+  const applyPreset = (p: (typeof PRESETS)[number]) => {
+    setKind(p.kind);
+    if (p.shift1 != null) setShift1(p.shift1);
+    if (p.shift2 != null) setShift2(p.shift2);
+    if (p.sat != null) setSatLevel(p.sat);
+  };
+
+  const { impData, frData, fc3, fc6, settlingMs, overshootPct, coeffText } = useMemo(() => {
     const a1 = 1 / 2 ** shift1;
     const a2 = 1 / 2 ** shift2;
-    const h = type === "ema" ? emaImpulse(a1) : bpImpulse(a1, a2);
+    const satAlpha = PROS_SAT_ALPHA[satLevel - 1] / 32768;
+    let h: number[];
+    let coeff: string;
+    if (kind === "ema") {
+      h = emaImpulse(a1);
+      coeff = `α = 1/2^${shift1} = ${a1.toFixed(4)}`;
+    } else if (kind === "lp2") {
+      h = lp2Impulse(a1);
+      coeff = `2× EMA, α = 1/2^${shift1} = ${a1.toFixed(4)}`;
+    } else if (kind === "bp") {
+      h = bpImpulse(a1, a2);
+      coeff = `α1 = 1/2^${shift1}, α2 = 1/2^${shift2}`;
+    } else if (kind === "sat") {
+      h = emaImpulse(satAlpha);
+      coeff = `SAT ${satLevel}: α = ${PROS_SAT_ALPHA[satLevel - 1]}/32768 = ${satAlpha.toFixed(4)}`;
+    } else {
+      const { b0, b1, b2, a1: ba1, a2: ba2 } = DISC_BIQUAD;
+      h = biquadImpulse(b0 / Q29, b1 / Q29, b2 / Q29, ba1 / Q29, ba2 / Q29);
+      coeff = `b=[${b0}, ${b1}, ${b2}] a=[${ba1}, ${ba2}] (Q29)`;
+    }
     const xs = h.map((_, n) => (n / fs) * 1000); // ms
     const fr = freqResponseDb(h, fs);
-    // -3 dB cutoff estimate from the response
-    let fcEst = 0;
-    for (let k = 0; k < fr.db.length; k++) {
-      if (fr.db[k] >= -3) fcEst = fr.f[k];
-    }
+    const { settlingMs, overshootPct } = stepMetrics(h, fs);
     return {
       impData: [xs, h] as unknown as uPlot.AlignedData,
       frData: [fr.f, fr.db] as unknown as uPlot.AlignedData,
-      fc: fcEst,
+      fc3: cutoff(fr, -3),
+      fc6: cutoff(fr, -6),
+      settlingMs,
+      overshootPct,
+      coeffText: coeff,
     };
-  }, [type, shift1, shift2, fs]);
+  }, [kind, shift1, shift2, satLevel, fs]);
 
   const impHost = useRef<HTMLDivElement | null>(null);
   const frHost = useRef<HTMLDivElement | null>(null);
@@ -178,41 +282,77 @@ export function FilterLab() {
     uFr.current?.setData(frData);
   }, [impData, frData]);
 
-  const btn = (activeCond: boolean) =>
+  const btn = (active: boolean) =>
     `rounded border px-2 py-0.5 text-xs transition-colors ${
-      activeCond ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+      active ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
     }`;
+  const lbl = "text-[10px] font-semibold uppercase tracking-wider text-muted";
+
+  const showShift = kind === "ema" || kind === "lp2" || kind === "bp";
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-4">
+      {/* Real project filters */}
+      <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-black/20 px-2 py-1">
+        <span className={lbl}>project filters</span>
+        {PRESETS.map((p) => (
+          <button key={p.id} onClick={() => applyPreset(p)} className={btn(false)} title={p.note}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Manual tweak */}
+      <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1">
-          <span className="text-[11px] uppercase tracking-wide text-muted">filter</span>
-          <button onClick={() => setType("ema")} className={btn(type === "ema")}>EMA</button>
-          <button onClick={() => setType("bp")} className={btn(type === "bp")}>band-pass</button>
+          <span className={lbl}>type</span>
+          {(["ema", "lp2", "bp", "biquad", "sat"] as Kind[]).map((k) => (
+            <button key={k} onClick={() => setKind(k)} className={btn(kind === k)}>
+              {k === "lp2" ? "2-pole" : k === "bp" ? "band-pass" : k === "biquad" ? "biquad" : k.toUpperCase()}
+            </button>
+          ))}
         </div>
-        <div className="flex items-center gap-1">
-          <span className="text-[11px] uppercase tracking-wide text-muted">shift</span>
-          <button onClick={() => setShift1((s) => Math.max(1, s - 1))} className={btn(false)}>−</button>
-          <span className="w-6 text-center font-mono text-xs tabular-nums">{shift1}</span>
-          <button onClick={() => setShift1((s) => Math.min(12, s + 1))} className={btn(false)}>+</button>
-        </div>
-        {type === "bp" && (
+        {showShift && (
           <div className="flex items-center gap-1">
-            <span className="text-[11px] uppercase tracking-wide text-muted">shift2</span>
+            <span className={lbl}>shift</span>
+            <button onClick={() => setShift1((s) => Math.max(1, s - 1))} className={btn(false)}>−</button>
+            <span className="w-6 text-center font-mono text-xs tabular-nums">{shift1}</span>
+            <button onClick={() => setShift1((s) => Math.min(12, s + 1))} className={btn(false)}>+</button>
+          </div>
+        )}
+        {kind === "bp" && (
+          <div className="flex items-center gap-1">
+            <span className={lbl}>shift2</span>
             <button onClick={() => setShift2((s) => Math.max(1, s - 1))} className={btn(false)}>−</button>
             <span className="w-6 text-center font-mono text-xs tabular-nums">{shift2}</span>
             <button onClick={() => setShift2((s) => Math.min(12, s + 1))} className={btn(false)}>+</button>
           </div>
         )}
+        {kind === "sat" && (
+          <div className="flex items-center gap-1">
+            <span className={lbl}>SAT</span>
+            <button onClick={() => setSatLevel((s) => Math.max(1, s - 1))} className={btn(false)}>−</button>
+            <span className="w-6 text-center font-mono text-xs tabular-nums">{satLevel}</span>
+            <button onClick={() => setSatLevel((s) => Math.min(20, s + 1))} className={btn(false)}>+</button>
+          </div>
+        )}
         <div className="flex items-center gap-1">
-          <span className="text-[11px] uppercase tracking-wide text-muted">Fs</span>
+          <span className={lbl}>Fs</span>
           {[125, 250, 1000].map((v) => (
             <button key={v} onClick={() => setFs(v)} className={btn(fs === v)}>{v}</button>
           ))}
         </div>
-        <span className="font-mono text-xs text-muted">≈ −3 dB @ {fc.toFixed(1)} Hz</span>
       </div>
+
+      {/* Coefficients + metrics */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-muted">
+        <span className="text-foreground">{coeffText}</span>
+        <span>−3 dB @ {fc3.toFixed(1)} Hz</span>
+        <span>−6 dB @ {fc6.toFixed(1)} Hz</span>
+        <span>settling {settlingMs == null ? "—" : `${settlingMs.toFixed(0)} ms`}</span>
+        <span>overshoot {overshootPct == null ? "—" : `${overshootPct.toFixed(1)} %`}</span>
+      </div>
+
       <div className="grid gap-3 lg:grid-cols-2">
         <div>
           <p className="mb-1 text-xs text-muted">impulse response h[n] · x: ms</p>
