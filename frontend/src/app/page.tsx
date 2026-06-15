@@ -128,6 +128,27 @@ function MaxBtn() {
   );
 }
 
+/** Saves the first <canvas> inside the nearest `.card-max` ancestor as a PNG. */
+function PngBtn({ name }: { name: string }) {
+  return (
+    <button
+      onClick={(e) => {
+        const card = (e.currentTarget as HTMLElement).closest(".card-max");
+        const cv = card?.querySelector("canvas") as HTMLCanvasElement | null;
+        if (!cv) return;
+        const a = document.createElement("a");
+        a.download = `${name}-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
+        a.href = cv.toDataURL("image/png");
+        a.click();
+      }}
+      title="save chart as PNG"
+      className="rounded border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:text-foreground"
+    >
+      PNG
+    </button>
+  );
+}
+
 /** A segmented choice / toggle button (active = accent-highlighted). */
 function Seg({
   active,
@@ -315,17 +336,20 @@ export default function Home() {
       <section className="mt-6">
         {tab === "hodograph" && (
           <div className="grid gap-4 lg:grid-cols-2">
-            <Card className="flex flex-col">
+            <Card className="card-max flex flex-col">
               <div className="mb-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <h2 className="text-sm font-medium text-muted">XY hodograph</h2>
-                  <div className="flex items-center gap-2 text-xs">
-                    {profile?.harmonics.map((h, i) => (
-                      <span key={h.id} className="inline-flex items-center gap-1.5">
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorFor(i) }} />
-                        <span className="font-mono">{h.id}</span>
-                      </span>
-                    ))}
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 text-xs">
+                      {profile?.harmonics.map((h, i) => (
+                        <span key={h.id} className="inline-flex items-center gap-1.5">
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorFor(i) }} />
+                          <span className="font-mono">{h.id}</span>
+                        </span>
+                      ))}
+                    </div>
+                    <PngBtn name="hodograph" />
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -504,7 +528,10 @@ export default function Home() {
             <div className="mb-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h2 className="text-sm font-medium text-muted">Virtual oscilloscope — {t.hasIq ? "demod I/Q" : "raw RX"}</h2>
-                <MaxBtn />
+                <div className="flex items-center gap-1">
+                  <PngBtn name="oscilloscope" />
+                  <MaxBtn />
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Ctrl label="time">
@@ -638,7 +665,10 @@ export default function Home() {
             <div className="mb-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h2 className="text-sm font-medium text-muted">Live FFT — EMI scout</h2>
-                <MaxBtn />
+                <div className="flex items-center gap-1">
+                  <PngBtn name="fft" />
+                  <MaxBtn />
+                </div>
               </div>
               {t.hasIq && (
                 <div className="flex flex-wrap items-center gap-2">
@@ -848,7 +878,8 @@ export default function Home() {
                   </Ctrl>
                 </>
               )}
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-1">
+                {dspMode === "live" && <PngBtn name="recorder" />}
                 <MaxBtn />
               </div>
             </div>
