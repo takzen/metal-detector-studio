@@ -55,8 +55,11 @@ flowchart TD
   stable waveform and captures one-shot target passes, alongside a fixed-position **measurements**
   overlay (Vpp, RMS, mean, frequency per I/Q). Shows the demodulated I/Q channels for devices that
   stream processed vectors (e.g. TAKTYK), or the raw ADC RX block where available.
-- **Live FFT (Spectrum Analyzer):** Hann-windowed dBFS spectrum with selectable frequency
-  span and a peak marker — environmental EMI monitoring to pick clean working bands.
+- **Live FFT (Spectrum Analyzer):** dBFS spectrum for environmental EMI monitoring and
+  picking clean working bands — selectable frequency span, **selectable window** (rect / Hann /
+  Hamming / Blackman / flat-top, with live RBW), adjustable dB floor, **EMA averaging**,
+  **max-hold**, 50 Hz mains reference lines, and a **waterfall / spectrogram** view (line,
+  waterfall, or both) with a peak marker.
 - **DSP Analyzer:** a multi-channel strip-chart recorder — each signal on its own lane
   (per-channel auto, lock, or fixed scale): **audio** (the signal-strength indicator) with the
   **threshold** floor overlaid on the same 0..4000 scale, **ground** (post-correction
@@ -69,6 +72,10 @@ flowchart TD
   (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
   firmware without PC rewrites. Profile and serial port are switchable live from the
   header (no backend restart).
+- **Consistent, persistent UI:** controls are grouped into clearly-labelled clusters
+  (parameter label vs. clickable choice), and UI settings (active tab, scope timebase,
+  trigger, FFT span/window/dB/avg/view, recorder window/channels, hodograph offset/EMA)
+  persist across reloads via `localStorage`.
 - **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
   coding assistants (read frames, analyze phase/spectrum, push config).
 

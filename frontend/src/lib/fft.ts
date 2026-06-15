@@ -48,29 +48,55 @@ function fftInPlace(re: Float64Array, im: Float64Array): void {
   }
 }
 
-const hannCache = new Map<number, { win: Float64Array; sum: number }>();
+export type WindowType = "rect" | "hann" | "hamming" | "blackman" | "flattop";
 
-function hann(n: number): { win: Float64Array; sum: number } {
-  const cached = hannCache.get(n);
+const winCache = new Map<string, { win: Float64Array; sum: number }>();
+
+/** Window coefficient at sample i of N (cosine-sum windows). */
+function windowCoeff(type: WindowType, i: number, n: number): number {
+  const x = (2 * Math.PI * i) / (n - 1);
+  switch (type) {
+    case "rect":
+      return 1;
+    case "hann":
+      return 0.5 - 0.5 * Math.cos(x);
+    case "hamming":
+      return 0.54 - 0.46 * Math.cos(x);
+    case "blackman":
+      return 0.42 - 0.5 * Math.cos(x) + 0.08 * Math.cos(2 * x);
+    case "flattop":
+      return (
+        0.21557895 -
+        0.41663158 * Math.cos(x) +
+        0.277263158 * Math.cos(2 * x) -
+        0.083578947 * Math.cos(3 * x) +
+        0.006947368 * Math.cos(4 * x)
+      );
+  }
+}
+
+function getWindow(type: WindowType, n: number): { win: Float64Array; sum: number } {
+  const key = `${type}:${n}`;
+  const cached = winCache.get(key);
   if (cached) return cached;
   const win = new Float64Array(n);
   let sum = 0;
   for (let i = 0; i < n; i++) {
-    win[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1));
+    win[i] = windowCoeff(type, i, n);
     sum += win[i];
   }
   const entry = { win, sum };
-  hannCache.set(n, entry);
+  winCache.set(key, entry);
   return entry;
 }
 
 /**
- * One-sided amplitude spectrum (linear, in input units) using a Hann window.
- * Returns bins 0..N/2 (length N/2 + 1).
+ * One-sided amplitude spectrum (linear, in input units) using the given window
+ * (default Hann). Returns bins 0..N/2 (length N/2 + 1).
  */
-export function amplitudeSpectrum(samples: ArrayLike<number>): Float64Array {
+export function amplitudeSpectrum(samples: ArrayLike<number>, window: WindowType = "hann"): Float64Array {
   const n = pow2Floor(samples.length);
-  const { win, sum } = hann(n);
+  const { win, sum } = getWindow(window, n);
   const re = new Float64Array(n);
   const im = new Float64Array(n);
   for (let i = 0; i < n; i++) re[i] = samples[i] * win[i];

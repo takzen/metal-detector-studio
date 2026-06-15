@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { FilterLab } from "@/components/FilterLab";
 import { Hodograph } from "@/components/Hodograph";
 import { IQScope, type TrigMode, type TrigSrc } from "@/components/IQScope";
-import { IQSpectrum } from "@/components/IQSpectrum";
+import { IQSpectrum, type SpectralPeak } from "@/components/IQSpectrum";
+import { pow2Floor, type WindowType } from "@/lib/fft";
+import { IQWaterfall } from "@/components/IQWaterfall";
 import { Recorder, type RecChannel } from "@/components/Recorder";
 import { Scope } from "@/components/Scope";
 import { SourceControls } from "@/components/SourceControls";
 import { Spectrum } from "@/components/Spectrum";
 import { colorFor } from "@/lib/palette";
+import { usePersistentState } from "@/lib/usePersistentState";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 
 const DEG = 180 / Math.PI;
@@ -19,6 +22,8 @@ const clamp180 = (d: number) => Math.max(-180, Math.min(180, d));
 const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
 const VDI_COLOR = "#c99a52"; // matches the hodograph VDI sub-scale
 const MODE_NAMES = ["DEEP", "DISC", "RELIC", "PIN", "PROS"]; // firmware M token (mode 0..4)
+// Equivalent-noise-bandwidth factor per window (RBW = ENBW · fs/N).
+const ENBW: Record<WindowType, number> = { rect: 1.0, hann: 1.5, hamming: 1.36, blackman: 1.73, flattop: 3.77 };
 // TH is sent as THRESHOLD_AMP (DAC 0..1333) for the audio overlay; invert it back to the
 // menu THRESHOLD value (0..200) for the readout. Mirrors firmware AUDIO_AMP_MAX/3 scale.
 const THRESHOLD_DAC_FULL = 4000 / 3;
@@ -62,6 +67,86 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * Strongest spectral peaks as a fixed overlay (like the scope measurements):
+ * always 6 rows + a Δ row, fixed-width columns + tabular-nums so values never
+ * shift the layout. Missing peaks show "—".
+ */
+function PeaksTable({ peaks }: { peaks: SpectralPeak[] }) {
+  const rows = Array.from({ length: 6 }, (_, i) => peaks[i]);
+  const d = peaks.length >= 2 ? { df: Math.abs(peaks[0].f - peaks[1].f), ddb: peaks[0].db - peaks[1].db } : null;
+  return (
+    <div className="pointer-events-none absolute right-2 top-2 rounded border border-border bg-black/40 px-2 py-1 font-mono text-[11px] tabular-nums backdrop-blur-sm">
+      <div className="grid grid-cols-[1rem_4rem_3rem] gap-x-2 gap-y-0.5">
+        <span className="text-muted">#</span>
+        <span className="text-right text-muted">Hz</span>
+        <span className="text-right text-muted">dB</span>
+        {rows.map((p, i) => (
+          <Fragment key={i}>
+            <span className="text-muted">{i + 1}</span>
+            <span className={`text-right ${i === 0 ? "text-foreground" : "text-muted"}`}>{p ? p.f.toFixed(0) : "—"}</span>
+            <span className={`text-right ${i === 0 ? "text-foreground" : "text-muted"}`}>{p ? p.db.toFixed(0) : "—"}</span>
+          </Fragment>
+        ))}
+        <span className="text-accent">Δ</span>
+        <span className="text-right text-accent">{d ? d.df.toFixed(0) : "—"}</span>
+        <span className="text-right text-accent">{d ? d.ddb.toFixed(0) : "—"}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A labeled control group rendered as a distinct boxed cluster: the label names
+ * the parameter, the children are its value choices. Boxing + spacing keeps
+ * groups from blending into one unreadable row of buttons.
+ */
+function Ctrl({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-1.5 rounded-md bg-black/20 px-2 py-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">{label}</span>
+      <div className="flex items-center gap-0.5">{children}</div>
+    </div>
+  );
+}
+
+/** A segmented choice / toggle button (active = accent-highlighted). */
+function Seg({
+  active,
+  onClick,
+  title,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`rounded border px-1.5 py-0.5 text-xs tabular-nums transition-colors ${
+        active ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Frequency tick strip under the waterfall (canvas has no left gutter: 0 = left edge). */
+function FreqAxis({ maxFreq }: { maxFreq: number }) {
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(f * maxFreq));
+  return (
+    <div className="mt-1 flex justify-between font-mono text-[10px] tabular-nums text-muted">
+      {ticks.map((hz, i) => (
+        <span key={i}>{hz}</span>
+      ))}
+    </div>
+  );
+}
+
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <div className={`rounded-lg border border-border bg-panel p-4 ${className}`}>{children}</div>
@@ -84,27 +169,38 @@ function RawUnavailable() {
 export default function Home() {
   const t = useTelemetry();
   const { profile, feature, raw, stats } = t;
-  const [tab, setTab] = useState<TabId>("hodograph");
+  // Persisted UI prefs (localStorage) — survive reload. Transient run-state
+  // (run/hold, pause, nonces) stays plain useState so it always starts fresh.
+  const [tab, setTab] = usePersistentState<TabId>("tab", "hodograph");
   const [zeroNonce, setZeroNonce] = useState(0);
-  const [scopeMs, setScopeMs] = useState(500); // oscilloscope timebase (window)
+  const [scopeMs, setScopeMs] = usePersistentState("scopeMs", 500); // oscilloscope timebase (window)
   const [scopeRun, setScopeRun] = useState(true); // run / hold
-  const [scopeYAuto, setScopeYAuto] = useState(true);
-  const [scopeYScale, setScopeYScale] = useState(8000); // manual vertical full-scale
-  const [trigMode, setTrigMode] = useState<TrigMode>("off"); // off = free-running roll
-  const [trigSrc, setTrigSrc] = useState<TrigSrc>("mag"); // |IQ| rising = target approach
-  const [trigEdge, setTrigEdge] = useState<"rising" | "falling">("rising");
-  const [trigLevel, setTrigLevel] = useState<number | "auto">("auto"); // "auto" = above-noise; number = manual raw (draggable)
+  const [scopeYAuto, setScopeYAuto] = usePersistentState("scopeYAuto", true);
+  const [scopeYScale, setScopeYScale] = usePersistentState("scopeYScale", 8000); // manual vertical full-scale
+  const [trigMode, setTrigMode] = usePersistentState<TrigMode>("trigMode", "off"); // off = free-running roll
+  const [trigSrc, setTrigSrc] = usePersistentState<TrigSrc>("trigSrc", "mag"); // |IQ| rising = target approach
+  const [trigEdge, setTrigEdge] = usePersistentState<"rising" | "falling">("trigEdge", "rising");
+  const [trigLevel, setTrigLevel] = usePersistentState<number | "auto">("trigLevel", "auto"); // "auto" = above-noise; number = manual raw (draggable)
   const [scopeArmNonce, setScopeArmNonce] = useState(0); // bump to (re)arm single-shot
-  const [fftSpan, setFftSpan] = useState<number | "full">("full"); // FFT frequency span [Hz]
-  const [recMs, setRecMs] = useState(2000); // DSP recorder window
-  const [recActive, setRecActive] = useState<Set<string>>(new Set(["audio", "threshold"]));
-  const [recScaleMode, setRecScaleMode] = useState<"auto" | "manual">("auto"); // recorder lane scaling
-  const [recZoom, setRecZoom] = useState(1); // manual lane zoom factor
+  const [fftSpan, setFftSpan] = usePersistentState<number | "full">("fftSpan", "full"); // FFT frequency span [Hz]
+  const [fftView, setFftView] = usePersistentState<"line" | "waterfall" | "both">("fftView", "line"); // FFT display
+  const [fftMaxHold, setFftMaxHold] = usePersistentState("fftMaxHold", false); // overlay per-bin max
+  const [fftAvg, setFftAvg] = usePersistentState("fftAvg", 1); // EMA averaging length (1 = off)
+  const [fftMains, setFftMains] = usePersistentState("fftMains", false); // 50 Hz mains reference lines
+  const [fftPeaksOn, setFftPeaksOn] = usePersistentState("fftPeaksOn", false); // peak table
+  const [fftPeaks, setFftPeaks] = useState<SpectralPeak[]>([]); // transient: live top-N peaks
+  const [fftWindow, setFftWindow] = usePersistentState<WindowType>("fftWindow", "hann"); // FFT window
+  const [fftDbFloor, setFftDbFloor] = usePersistentState("fftDbFloor", -100); // bottom of dB scale
+  const [recMs, setRecMs] = usePersistentState("recMs", 2000); // DSP recorder window
+  const [recActiveArr, setRecActiveArr] = usePersistentState<string[]>("recActive", ["audio", "threshold"]);
+  const recActive = useMemo(() => new Set(recActiveArr), [recActiveArr]);
+  const [recScaleMode, setRecScaleMode] = usePersistentState<"auto" | "manual">("recScaleMode", "auto"); // recorder lane scaling
+  const [recZoom, setRecZoom] = usePersistentState("recZoom", 1); // manual lane zoom factor
   const [recPaused, setRecPaused] = useState(false); // recorder freeze (play/stop)
-  const [dspMode, setDspMode] = useState<"live" | "theory">("live");
-  const [offsetDeg, setOffsetDeg] = useState(0); // demodulator phase offset (colour overlay)
-  const [persistence, setPersistence] = useState(true); // hodograph phosphor trail
-  const [ema, setEma] = useState(0.3); // hodograph live-vector smoothing factor
+  const [dspMode, setDspMode] = usePersistentState<"live" | "theory">("dspMode", "live");
+  const [offsetDeg, setOffsetDeg] = usePersistentState("offsetDeg", 0); // demodulator phase offset (colour overlay)
+  const [persistence, setPersistence] = usePersistentState("persistence", true); // hodograph phosphor trail
+  const [ema, setEma] = usePersistentState("ema", 0.3); // hodograph live-vector smoothing factor
 
   const recChannels = useMemo<RecChannel[]>(
     () => [
@@ -120,12 +216,12 @@ export default function Home() {
   );
 
   const toggleRec = (k: string) =>
-    setRecActive((prev) => {
-      const next = new Set(prev);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
-    });
+    setRecActiveArr((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
+
+  // FFT resolution bandwidth (display only): RBW = ENBW(window) · fs/N.
+  const fftN = pow2Floor(t.iqIRef.current?.length ?? 0);
+  const fftFs = t.iqFsRef.current || 0;
+  const fftRbw = fftN > 0 && fftFs > 0 ? (ENBW[fftWindow] * fftFs) / fftN : 0;
 
   // Keyboard zero: Enter or Z (mirrors the detector's ENTER=zero), unless typing in a control.
   useEffect(() => {
@@ -190,53 +286,55 @@ export default function Home() {
         {tab === "hodograph" && (
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="flex flex-col">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm font-medium text-muted">XY hodograph</h2>
-                <div className="flex flex-wrap items-center gap-3">
+              <div className="mb-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-medium text-muted">XY hodograph</h2>
+                  <div className="flex items-center gap-2 text-xs">
+                    {profile?.harmonics.map((h, i) => (
+                      <span key={h.id} className="inline-flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorFor(i) }} />
+                        <span className="font-mono">{h.id}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => setZeroNonce((n) => n + 1)}
                     title="zero now: snap the centre to the current vector (keyboard: Enter or Z)"
-                    className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:text-foreground"
+                    className="rounded-md border border-accent/60 bg-accent/10 px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent/20"
                   >
                     zero (Enter)
                   </button>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] uppercase tracking-wide text-muted">offset</span>
-                    <span className="w-12 text-right font-mono text-xs tabular-nums text-foreground">
+                  <Ctrl label="offset">
+                    <span className="w-11 text-right font-mono text-xs tabular-nums text-foreground">
                       {offsetDeg >= 0 ? "+" : ""}
                       {offsetDeg.toFixed(1)}°
                     </span>
                     {[-0.3, 0.3].map((d) => (
-                      <button
+                      <Seg
                         key={d}
+                        active={false}
                         onClick={() => setOffsetDeg((v) => clamp180(Number((v + d).toFixed(1))))}
                         title="demodulator phase offset — colour overlay (the grid stays unchanged)"
-                        className="rounded border border-border px-1.5 py-0.5 text-xs tabular-nums text-muted hover:text-foreground"
                       >
                         {d > 0 ? `+${d}` : d}
-                      </button>
+                      </Seg>
                     ))}
-                    <button
-                      onClick={() => setOffsetDeg(0)}
-                      title="reset offset to 0°"
-                      className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
-                    >
+                    <Seg active={false} onClick={() => setOffsetDeg(0)} title="reset offset to 0°">
                       0
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => setPersistence((v) => !v)}
-                    title="persistence / phosphor: density trail of the raw I/Q samples"
-                    className={`rounded border px-2 py-0.5 text-xs transition-colors ${
-                      persistence
-                        ? "border-accent text-foreground"
-                        : "border-border text-muted hover:text-foreground"
-                    }`}
-                  >
-                    persist
-                  </button>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] uppercase tracking-wide text-muted">EMA</span>
+                    </Seg>
+                  </Ctrl>
+                  <Ctrl label="trail">
+                    <Seg
+                      active={persistence}
+                      onClick={() => setPersistence((v) => !v)}
+                      title="persistence / phosphor: density trail of the raw I/Q samples"
+                    >
+                      persist
+                    </Seg>
+                  </Ctrl>
+                  <Ctrl label="EMA">
                     <input
                       type="range"
                       min={0.05}
@@ -250,16 +348,7 @@ export default function Home() {
                     <span className="w-9 text-right font-mono text-xs tabular-nums text-foreground">
                       {ema.toFixed(2)}
                     </span>
-                  </div>
-                  {profile?.harmonics.map((h, i) => (
-                    <span key={h.id} className="inline-flex items-center gap-1.5 text-xs">
-                      <span
-                        className="h-2.5 w-2.5 rounded-full"
-                        style={{ backgroundColor: colorFor(i) }}
-                      />
-                      <span className="font-mono">{h.id}</span>
-                    </span>
-                  ))}
+                  </Ctrl>
                 </div>
               </div>
               <div className="relative aspect-square w-full">
@@ -382,128 +471,100 @@ export default function Home() {
 
         {tab === "scope" && (
           <Card>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-medium text-muted">Virtual oscilloscope — {t.hasIq ? "demod I/Q" : "raw RX"}</h2>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-1">
-                  <span className="text-[11px] uppercase tracking-wide text-muted">time</span>
+            <div className="mb-3">
+              <h2 className="mb-2 text-sm font-medium text-muted">Virtual oscilloscope — {t.hasIq ? "demod I/Q" : "raw RX"}</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <Ctrl label="time">
                   {[50, 100, 200, 500, 1000, 2000].map((ms) => (
-                    <button
-                      key={ms}
-                      onClick={() => setScopeMs(ms)}
-                      className={`rounded border px-1.5 py-0.5 text-xs tabular-nums transition-colors ${
-                        scopeMs === ms ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                      }`}
-                    >
+                    <Seg key={ms} active={scopeMs === ms} onClick={() => setScopeMs(ms)}>
                       {ms < 1000 ? `${ms}m` : `${ms / 1000}s`}
-                    </button>
+                    </Seg>
                   ))}
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[11px] uppercase tracking-wide text-muted">V</span>
-                  <button
-                    onClick={() => setScopeYAuto((v) => !v)}
-                    className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
-                      scopeYAuto ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                    }`}
-                  >
+                </Ctrl>
+                <Ctrl label="volts">
+                  <Seg active={scopeYAuto} onClick={() => setScopeYAuto((v) => !v)}>
                     auto
-                  </button>
-                  <button
+                  </Seg>
+                  <Seg
+                    active={false}
                     onClick={() => { setScopeYAuto(false); setScopeYScale((s) => Math.max(50, Math.round(s / 2))); }}
-                    className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
+                    title="zoom in (smaller full-scale)"
                   >
                     +
-                  </button>
-                  <button
+                  </Seg>
+                  <Seg
+                    active={false}
                     onClick={() => { setScopeYAuto(false); setScopeYScale((s) => Math.min(2_000_000, s * 2)); }}
-                    className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
+                    title="zoom out (larger full-scale)"
                   >
                     −
-                  </button>
+                  </Seg>
                   <span className="w-16 text-[11px] tabular-nums text-muted">
                     {scopeYAuto ? "auto" : `±${scopeYScale >= 1000 ? (scopeYScale / 1000).toFixed(1) + "k" : scopeYScale}`}
                   </span>
-                </div>
+                </Ctrl>
                 <button
                   onClick={() => setScopeRun((v) => !v)}
-                  className={`w-20 shrink-0 rounded border px-2 py-0.5 text-center text-xs transition-colors ${
-                    scopeRun ? "border-border text-muted hover:text-foreground" : "border-amber-500 text-amber-400"
+                  className={`w-20 shrink-0 rounded-md border px-3 py-1 text-center text-xs font-medium transition-colors ${
+                    scopeRun
+                      ? "border-border text-muted hover:text-foreground"
+                      : "border-amber-500 bg-amber-500/10 text-amber-400"
                   }`}
                 >
                   {scopeRun ? "⏸ hold" : "▶ run"}
                 </button>
-              </div>
-            </div>
-            <div className="mb-3 flex flex-wrap items-center gap-3 border-t border-border pt-3">
-              <div className="flex items-center gap-1">
-                <span className="text-[11px] uppercase tracking-wide text-muted">trig</span>
-                {(["off", "auto", "normal", "single"] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => {
-                      setTrigMode(m);
-                      if (m === "single") setScopeArmNonce((n) => n + 1);
-                    }}
-                    className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
-                      trigMode === m ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                    }`}
-                  >
-                    {m === "normal" ? "norm" : m}
-                  </button>
-                ))}
-              </div>
-              {trigMode !== "off" && (
-                <>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] uppercase tracking-wide text-muted">src</span>
-                    {(["I", "Q", "mag"] as const).map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => setTrigSrc(s)}
-                        className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
-                          trigSrc === s ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                        }`}
+                <Ctrl label="trig">
+                  {(["off", "auto", "normal", "single"] as const).map((m) => (
+                    <Seg
+                      key={m}
+                      active={trigMode === m}
+                      onClick={() => {
+                        setTrigMode(m);
+                        if (m === "single") setScopeArmNonce((n) => n + 1);
+                      }}
+                    >
+                      {m === "normal" ? "norm" : m}
+                    </Seg>
+                  ))}
+                </Ctrl>
+                {trigMode !== "off" && (
+                  <>
+                    <Ctrl label="src">
+                      {(["I", "Q", "mag"] as const).map((s) => (
+                        <Seg key={s} active={trigSrc === s} onClick={() => setTrigSrc(s)}>
+                          {s === "mag" ? "|IQ|" : s}
+                        </Seg>
+                      ))}
+                    </Ctrl>
+                    <Ctrl label="edge">
+                      <Seg
+                        active={false}
+                        onClick={() => setTrigEdge((e) => (e === "rising" ? "falling" : "rising"))}
+                        title="toggle trigger edge (rising / falling)"
                       >
-                        {s === "mag" ? "|IQ|" : s}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] uppercase tracking-wide text-muted">edge</span>
-                    <button
-                      onClick={() => setTrigEdge((e) => (e === "rising" ? "falling" : "rising"))}
-                      className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:text-foreground"
-                      title="toggle trigger edge (rising / falling)"
-                    >
-                      {trigEdge === "rising" ? "↑ rise" : "↓ fall"}
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] uppercase tracking-wide text-muted">lvl</span>
-                    <button
-                      onClick={() => setTrigLevel("auto")}
-                      className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
-                        trigLevel === "auto" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                      }`}
-                    >
-                      auto
-                    </button>
-                    <span className="text-[11px] tabular-nums text-muted">
-                      {trigLevel === "auto" ? "↕ drag line" : `man ${Math.round(trigLevel)}`}
-                    </span>
-                  </div>
-                  {trigMode === "single" && (
-                    <button
-                      onClick={() => setScopeArmNonce((n) => n + 1)}
-                      className="rounded border border-blue-500 px-2 py-0.5 text-xs text-blue-400 hover:text-blue-300"
-                      title="re-arm single-shot capture"
-                    >
-                      ↻ arm
-                    </button>
-                  )}
-                </>
-              )}
+                        {trigEdge === "rising" ? "↑ rise" : "↓ fall"}
+                      </Seg>
+                    </Ctrl>
+                    <Ctrl label="lvl">
+                      <Seg active={trigLevel === "auto"} onClick={() => setTrigLevel("auto")}>
+                        auto
+                      </Seg>
+                      <span className="text-[11px] tabular-nums text-muted">
+                        {trigLevel === "auto" ? "↕ drag line" : `man ${Math.round(trigLevel)}`}
+                      </span>
+                      {trigMode === "single" && (
+                        <Seg
+                          active={false}
+                          onClick={() => setScopeArmNonce((n) => n + 1)}
+                          title="re-arm single-shot capture"
+                        >
+                          ↻ arm
+                        </Seg>
+                      )}
+                    </Ctrl>
+                  </>
+                )}
+              </div>
             </div>
             <div className="h-[28rem] w-full">
               {t.hasIq ? (
@@ -541,80 +602,169 @@ export default function Home() {
 
         {tab === "fft" && (
           <Card>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-sm font-medium text-muted">Live FFT — EMI scout</h2>
-              <div className="flex items-center gap-1">
-                <span className="text-[11px] uppercase tracking-wide text-muted">span</span>
-                {([50, 100, 200, "full"] as const).map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setFftSpan(s)}
-                    className={`rounded border px-1.5 py-0.5 text-xs tabular-nums transition-colors ${
-                      fftSpan === s ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                    }`}
-                  >
-                    {s === "full" ? "full" : `${s}Hz`}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="h-[28rem] w-full">
-              {t.hasIq ? (
-                <IQSpectrum iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} spanHz={fftSpan} />
-              ) : profile && raw ? (
-                <Spectrum
-                  rawRef={t.rawRef}
-                  sampleRateHz={profile.raw.sample_rate_hz}
-                  blockSize={profile.raw.block_size}
-                  fullscaleLsb={profile.raw.fullscale_lsb}
-                />
-              ) : (
-                <RawUnavailable />
+            <div className="mb-3">
+              <h2 className="mb-2 text-sm font-medium text-muted">Live FFT — EMI scout</h2>
+              {t.hasIq && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Ctrl label="view">
+                    {(["line", "waterfall", "both"] as const).map((v) => (
+                      <Seg key={v} active={fftView === v} onClick={() => setFftView(v)}>
+                        {v === "waterfall" ? "fall" : v}
+                      </Seg>
+                    ))}
+                  </Ctrl>
+                  <Ctrl label="span">
+                    {([50, 100, 200, "full"] as const).map((s) => (
+                      <Seg key={s} active={fftSpan === s} onClick={() => setFftSpan(s)}>
+                        {s === "full" ? "full" : `${s}Hz`}
+                      </Seg>
+                    ))}
+                  </Ctrl>
+                  <Ctrl label="win">
+                    {([
+                      ["rect", "rect"],
+                      ["hann", "hann"],
+                      ["hamming", "hamm"],
+                      ["blackman", "black"],
+                      ["flattop", "flat"],
+                    ] as [WindowType, string][]).map(([val, label]) => (
+                      <Seg
+                        key={val}
+                        active={fftWindow === val}
+                        onClick={() => setFftWindow(val)}
+                        title="FFT window — resolution vs spectral leakage (flat-top = best amplitude accuracy)"
+                      >
+                        {label}
+                      </Seg>
+                    ))}
+                  </Ctrl>
+                  <Ctrl label="dB">
+                    {[-60, -80, -100, -120].map((f) => (
+                      <Seg
+                        key={f}
+                        active={fftDbFloor === f}
+                        onClick={() => setFftDbFloor(f)}
+                        title="bottom of the dB scale (visible dynamic range)"
+                      >
+                        {f}
+                      </Seg>
+                    ))}
+                  </Ctrl>
+                  {fftView !== "waterfall" && (
+                    <>
+                      <Ctrl label="avg">
+                        {[1, 4, 16].map((n) => (
+                          <Seg
+                            key={n}
+                            active={fftAvg === n}
+                            onClick={() => setFftAvg(n)}
+                            title="exponential averaging — smooths the noise floor"
+                          >
+                            {n === 1 ? "off" : `×${n}`}
+                          </Seg>
+                        ))}
+                      </Ctrl>
+                      <Ctrl label="overlay">
+                        <Seg
+                          active={fftMaxHold}
+                          onClick={() => setFftMaxHold((v) => !v)}
+                          title="max-hold: running per-bin maximum (catches short interferers). Click again to clear."
+                        >
+                          max-hold
+                        </Seg>
+                        <Seg
+                          active={fftMains}
+                          onClick={() => setFftMains((v) => !v)}
+                          title="reference lines at 50 Hz mains harmonics (spot hum in the baseband I/Q)"
+                        >
+                          mains
+                        </Seg>
+                        <Seg
+                          active={fftPeaksOn}
+                          onClick={() => setFftPeaksOn((v) => !v)}
+                          title="list the strongest spectral peaks (unstable — experimental)"
+                        >
+                          peaks
+                        </Seg>
+                      </Ctrl>
+                    </>
+                  )}
+                </div>
               )}
             </div>
+            {t.hasIq ? (
+              <>
+                {(fftView === "line" || fftView === "both") && (
+                  <div className={`relative w-full ${fftView === "both" ? "h-[15rem]" : "h-[28rem]"}`}>
+                    <IQSpectrum iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} spanHz={fftSpan} maxHold={fftMaxHold} avgN={fftAvg} mainsHz={fftMains ? 50 : 0} windowType={fftWindow} dbFloor={fftDbFloor} onPeaks={fftPeaksOn ? setFftPeaks : undefined} />
+                    {fftPeaksOn && <PeaksTable peaks={fftPeaks} />}
+                  </div>
+                )}
+                {(fftView === "waterfall" || fftView === "both") && (
+                  <div className={fftView === "both" ? "mt-2 h-[13rem] w-full" : "h-[28rem] w-full"}>
+                    <IQWaterfall iRef={t.iqIRef} fsRef={t.iqFsRef} spanHz={fftSpan} windowType={fftWindow} dbFloor={fftDbFloor} />
+                    <FreqAxis maxFreq={fftSpan === "full" ? (t.iqFsRef.current || 1000) / 2 : fftSpan} />
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="h-[28rem] w-full">
+                {profile && raw ? (
+                  <Spectrum
+                    rawRef={t.rawRef}
+                    sampleRateHz={profile.raw.sample_rate_hz}
+                    blockSize={profile.raw.block_size}
+                    fullscaleLsb={profile.raw.fullscale_lsb}
+                  />
+                ) : (
+                  <RawUnavailable />
+                )}
+              </div>
+            )}
             <div className="mt-2 flex items-center gap-3 text-xs text-muted">
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#3b82f6" }} />I</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#f59e0b" }} />Q</span>
-              <span>x: frequency [Hz] · y: |X| [dBFS] · Hann · dashed = peak</span>
+              {fftView === "waterfall" ? (
+                <span>x: frequency [Hz] · y: time (newest on top) · colour: |X| [dBFS] {fftDbFloor}…0 · {fftWindow}</span>
+              ) : (
+                <>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#3b82f6" }} />I</span>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#f59e0b" }} />Q</span>
+                  {fftMaxHold && (
+                    <span className="inline-flex items-center gap-1"><span className="h-0.5 w-3" style={{ background: "#cbd5e1" }} />max-hold</span>
+                  )}
+                  {fftAvg > 1 && <span>avg ×{fftAvg}</span>}
+                  {fftRbw > 0 && <span>RBW {fftRbw < 10 ? fftRbw.toFixed(2) : fftRbw.toFixed(1)} Hz</span>}
+                  <span>x: frequency [Hz] · y: |X| [dBFS] · {fftWindow} · green dash = peak</span>
+                </>
+              )}
             </div>
           </Card>
         )}
 
         {tab === "dsp" && (
           <Card>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setDspMode("live")}
-                  className={`rounded border px-2 py-0.5 text-xs transition-colors ${
-                    dspMode === "live" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                  }`}
-                >
-                  live recorder
-                </button>
-                <button
-                  onClick={() => setDspMode("theory")}
-                  className={`rounded border px-2 py-0.5 text-xs transition-colors ${
-                    dspMode === "theory" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                  }`}
-                >
-                  filter analysis
-                </button>
-              </div>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Ctrl label="mode">
+                <Seg active={dspMode === "live"} onClick={() => setDspMode("live")}>
+                  recorder
+                </Seg>
+                <Seg active={dspMode === "theory"} onClick={() => setDspMode("theory")}>
+                  filter lab
+                </Seg>
+              </Ctrl>
               {dspMode === "live" && (
-                <div className="flex flex-wrap items-center gap-3">
+                <>
                   <button
                     onClick={() => setRecPaused((p) => !p)}
-                    className={`rounded border px-2 py-0.5 text-xs font-medium transition-colors ${
+                    className={`shrink-0 rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
                       recPaused
-                        ? "border-emerald-500 text-emerald-400 hover:text-emerald-300"
-                        : "border-red-500 text-red-400 hover:text-red-300"
+                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-400 hover:text-emerald-300"
+                        : "border-red-500 bg-red-500/10 text-red-400 hover:text-red-300"
                     }`}
                     title={recPaused ? "Resume live recording" : "Freeze the recorder"}
                   >
                     {recPaused ? "▶ play" : "■ stop"}
                   </button>
-                  <div className="flex flex-wrap items-center gap-1">
+                  <Ctrl label="channels">
                     {recChannels.map((c) => (
                       <button
                         key={c.key}
@@ -627,56 +777,40 @@ export default function Home() {
                         {c.label}
                       </button>
                     ))}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] uppercase tracking-wide text-muted">win</span>
+                  </Ctrl>
+                  <Ctrl label="win">
                     {[500, 1000, 2000, 5000, 10000].map((ms) => (
-                      <button
-                        key={ms}
-                        onClick={() => setRecMs(ms)}
-                        className={`rounded border px-1.5 py-0.5 text-xs tabular-nums transition-colors ${
-                          recMs === ms ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                        }`}
-                      >
+                      <Seg key={ms} active={recMs === ms} onClick={() => setRecMs(ms)}>
                         {ms / 1000}s
-                      </button>
+                      </Seg>
                     ))}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] uppercase tracking-wide text-muted">scale</span>
-                    <button
-                      onClick={() => setRecScaleMode("auto")}
-                      className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
-                        recScaleMode === "auto" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                      }`}
-                    >
+                  </Ctrl>
+                  <Ctrl label="scale">
+                    <Seg active={recScaleMode === "auto"} onClick={() => setRecScaleMode("auto")}>
                       auto
-                    </button>
-                    <button
-                      onClick={() => setRecScaleMode("manual")}
-                      className={`rounded border px-1.5 py-0.5 text-xs transition-colors ${
-                        recScaleMode === "manual" ? "border-accent text-foreground" : "border-border text-muted hover:text-foreground"
-                      }`}
-                    >
+                    </Seg>
+                    <Seg active={recScaleMode === "manual"} onClick={() => setRecScaleMode("manual")}>
                       lock
-                    </button>
-                    <button
+                    </Seg>
+                    <Seg
+                      active={false}
                       onClick={() => { setRecScaleMode("manual"); setRecZoom((z) => Math.min(20, +(z * 1.4).toFixed(2))); }}
-                      className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
+                      title="zoom in"
                     >
                       +
-                    </button>
-                    <button
+                    </Seg>
+                    <Seg
+                      active={false}
                       onClick={() => { setRecScaleMode("manual"); setRecZoom((z) => Math.max(0.05, +(z / 1.4).toFixed(2))); }}
-                      className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:text-foreground"
+                      title="zoom out"
                     >
                       −
-                    </button>
+                    </Seg>
                     <span className="w-12 text-[11px] tabular-nums text-muted">
                       {recScaleMode === "auto" ? "auto" : `×${recZoom.toFixed(1)}`}
                     </span>
-                  </div>
-                </div>
+                  </Ctrl>
+                </>
               )}
             </div>
             {dspMode === "live" ? (
