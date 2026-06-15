@@ -128,17 +128,31 @@ function MaxBtn() {
   );
 }
 
-/** Saves the first <canvas> inside the nearest `.card-max` ancestor as a PNG. */
+/**
+ * Saves the first <canvas> inside the nearest `.card-max` ancestor as a PNG.
+ * The chart canvases are transparent (the panel background is CSS, not painted
+ * on the canvas), so we composite the capture onto an opaque panel-coloured
+ * canvas first — otherwise the export looks empty on a transparent background.
+ */
 function PngBtn({ name }: { name: string }) {
   return (
     <button
       onClick={(e) => {
         const card = (e.currentTarget as HTMLElement).closest(".card-max");
-        const cv = card?.querySelector("canvas") as HTMLCanvasElement | null;
-        if (!cv) return;
+        const src = card?.querySelector("canvas") as HTMLCanvasElement | null;
+        if (!src) return;
+        const out = document.createElement("canvas");
+        out.width = src.width;
+        out.height = src.height;
+        const ctx = out.getContext("2d");
+        if (!ctx) return;
+        const panel = getComputedStyle(document.documentElement).getPropertyValue("--panel").trim();
+        ctx.fillStyle = panel || "#11151c";
+        ctx.fillRect(0, 0, out.width, out.height);
+        ctx.drawImage(src, 0, 0);
         const a = document.createElement("a");
         a.download = `${name}-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
-        a.href = cv.toDataURL("image/png");
+        a.href = out.toDataURL("image/png");
         a.click();
       }}
       title="save chart as PNG"
