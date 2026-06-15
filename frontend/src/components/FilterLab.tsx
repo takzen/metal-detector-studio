@@ -133,6 +133,7 @@ function makePlot(
   series: uPlot.Series[],
   xRange: () => [number, number],
   yRange: uPlot.Scale["range"],
+  onCursor?: (u: uPlot) => void,
 ): uPlot {
   const opts: uPlot.Options = {
     width: 100,
@@ -144,8 +145,9 @@ function makePlot(
       { stroke: "#8b98a9", grid: { stroke: "#1b2330", width: 1 }, ticks: { stroke: "#1b2330", width: 1 }, size: 52 },
     ],
     series: [{}, ...series],
-    cursor: {},
+    cursor: { x: true, y: true, points: { show: true } },
     legend: { show: false },
+    hooks: onCursor ? { setCursor: [onCursor] } : {},
   };
   return new uPlot(opts, [[]] as unknown as uPlot.AlignedData, host);
 }
@@ -230,6 +232,8 @@ export function FilterLab() {
 
   const impHost = useRef<HTMLDivElement | null>(null);
   const frHost = useRef<HTMLDivElement | null>(null);
+  const impRead = useRef<HTMLSpanElement | null>(null);
+  const frRead = useRef<HTMLSpanElement | null>(null);
   const uImp = useRef<uPlot | null>(null);
   const uFr = useRef<uPlot | null>(null);
   const fsRef = useRef(fs);
@@ -260,6 +264,14 @@ export function FilterLab() {
           const p = (hi - lo) * 0.1 || 0.1;
           return [lo - p, hi + p];
         },
+        (u) => {
+          const i = u.cursor.idx;
+          if (!impRead.current) return;
+          if (i == null) { impRead.current.textContent = ""; return; }
+          const x = (u.data[0] as number[])[i];
+          const y = (u.data[1] as number[])[i];
+          impRead.current.textContent = `${x.toFixed(1)} ms · ${y.toFixed(4)}`;
+        },
       );
       uImp.current.setData(dataRef.current.impData);
     }
@@ -269,6 +281,14 @@ export function FilterLab() {
         [{ label: "|H| dB", stroke: "#3b82f6", width: 1, points: { show: false } }],
         () => [0, fsRef.current / 2],
         [-60, 3],
+        (u) => {
+          const i = u.cursor.idx;
+          if (!frRead.current) return;
+          if (i == null) { frRead.current.textContent = ""; return; }
+          const x = (u.data[0] as number[])[i];
+          const y = (u.data[1] as number[])[i];
+          frRead.current.textContent = `${x.toFixed(1)} Hz · ${y.toFixed(1)} dB`;
+        },
       );
       uFr.current.setData(dataRef.current.frData);
     }
@@ -383,11 +403,17 @@ export function FilterLab() {
 
       <div className="grid gap-3 lg:grid-cols-2">
         <div>
-          <p className="mb-1 text-xs text-muted">impulse response h[n] · x: ms</p>
+          <p className="mb-1 flex items-center justify-between text-xs text-muted">
+            <span>impulse response h[n] · x: ms</span>
+            <span ref={impRead} className="font-mono tabular-nums text-foreground" />
+          </p>
           <div ref={impHost} className="h-64 w-full" />
         </div>
         <div>
-          <p className="mb-1 text-xs text-muted">frequency response · x: Hz · y: dB</p>
+          <p className="mb-1 flex items-center justify-between text-xs text-muted">
+            <span>frequency response · x: Hz · y: dB</span>
+            <span ref={frRead} className="font-mono tabular-nums text-foreground" />
+          </p>
           <div ref={frHost} className="h-64 w-full" />
         </div>
       </div>
