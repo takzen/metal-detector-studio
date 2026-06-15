@@ -110,6 +110,24 @@ function Ctrl({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
+/** Toggles the browser Fullscreen API on the nearest `.card-max` ancestor. */
+function MaxBtn() {
+  return (
+    <button
+      onClick={(e) => {
+        const card = (e.currentTarget as HTMLElement).closest(".card-max") as HTMLElement | null;
+        if (!card) return;
+        if (document.fullscreenElement) document.exitFullscreen();
+        else card.requestFullscreen?.();
+      }}
+      title="maximize chart (Esc to exit)"
+      className="rounded border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:text-foreground"
+    >
+      ⛶
+    </button>
+  );
+}
+
 /** A segmented choice / toggle button (active = accent-highlighted). */
 function Seg({
   active,
@@ -223,18 +241,30 @@ export default function Home() {
   const fftFs = t.iqFsRef.current || 0;
   const fftRbw = fftN > 0 && fftFs > 0 ? (ENBW[fftWindow] * fftFs) / fftN : 0;
 
-  // Keyboard zero: Enter or Z (mirrors the detector's ENTER=zero), unless typing in a control.
+  // Keyboard shortcuts (ignored while typing in a control):
+  //  1..N — switch tabs · Enter/Z — zero the hodograph · Space — run/hold (scope) or play/stop (DSP)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(el.tagName)) return;
+      const num = Number(e.key);
+      if (Number.isInteger(num) && num >= 1 && num <= TABS.length) {
+        setTab(TABS[num - 1].id);
+        return;
+      }
       if (e.key === "Enter" || e.key.toLowerCase() === "z") {
         setZeroNonce((n) => n + 1);
+        return;
+      }
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault(); // don't scroll the page
+        if (tab === "scope") setScopeRun((v) => !v);
+        else if (tab === "dsp" && dspMode === "live") setRecPaused((v) => !v);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [tab, dspMode, setTab, setScopeRun, setRecPaused]);
 
   return (
     <main className="flex-1 w-full max-w-7xl mx-auto p-6">
@@ -470,9 +500,12 @@ export default function Home() {
         )}
 
         {tab === "scope" && (
-          <Card>
+          <Card className="card-max">
             <div className="mb-3">
-              <h2 className="mb-2 text-sm font-medium text-muted">Virtual oscilloscope — {t.hasIq ? "demod I/Q" : "raw RX"}</h2>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h2 className="text-sm font-medium text-muted">Virtual oscilloscope — {t.hasIq ? "demod I/Q" : "raw RX"}</h2>
+                <MaxBtn />
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Ctrl label="time">
                   {[50, 100, 200, 500, 1000, 2000].map((ms) => (
@@ -566,7 +599,7 @@ export default function Home() {
                 )}
               </div>
             </div>
-            <div className="h-[28rem] w-full">
+            <div className="chart-fill h-[28rem] w-full">
               {t.hasIq ? (
                 <IQScope
                   iRef={t.iqIRef}
@@ -601,9 +634,12 @@ export default function Home() {
         )}
 
         {tab === "fft" && (
-          <Card>
+          <Card className="card-max">
             <div className="mb-3">
-              <h2 className="mb-2 text-sm font-medium text-muted">Live FFT — EMI scout</h2>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h2 className="text-sm font-medium text-muted">Live FFT — EMI scout</h2>
+                <MaxBtn />
+              </div>
               {t.hasIq && (
                 <div className="flex flex-wrap items-center gap-2">
                   <Ctrl label="view">
@@ -695,20 +731,20 @@ export default function Home() {
             {t.hasIq ? (
               <>
                 {(fftView === "line" || fftView === "both") && (
-                  <div className={`relative w-full ${fftView === "both" ? "h-[15rem]" : "h-[28rem]"}`}>
+                  <div className={`chart-fill relative w-full ${fftView === "both" ? "h-[15rem]" : "h-[28rem]"}`}>
                     <IQSpectrum iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} spanHz={fftSpan} maxHold={fftMaxHold} avgN={fftAvg} mainsHz={fftMains ? 50 : 0} windowType={fftWindow} dbFloor={fftDbFloor} onPeaks={fftPeaksOn ? setFftPeaks : undefined} />
                     {fftPeaksOn && <PeaksTable peaks={fftPeaks} />}
                   </div>
                 )}
                 {(fftView === "waterfall" || fftView === "both") && (
-                  <div className={fftView === "both" ? "mt-2 h-[13rem] w-full" : "h-[28rem] w-full"}>
+                  <div className={`chart-fill ${fftView === "both" ? "mt-2 h-[13rem] w-full" : "h-[28rem] w-full"}`}>
                     <IQWaterfall iRef={t.iqIRef} fsRef={t.iqFsRef} spanHz={fftSpan} windowType={fftWindow} dbFloor={fftDbFloor} />
                     <FreqAxis maxFreq={fftSpan === "full" ? (t.iqFsRef.current || 1000) / 2 : fftSpan} />
                   </div>
                 )}
               </>
             ) : (
-              <div className="h-[28rem] w-full">
+              <div className="chart-fill h-[28rem] w-full">
                 {profile && raw ? (
                   <Spectrum
                     rawRef={t.rawRef}
@@ -741,7 +777,7 @@ export default function Home() {
         )}
 
         {tab === "dsp" && (
-          <Card>
+          <Card className="card-max">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <Ctrl label="mode">
                 <Seg active={dspMode === "live"} onClick={() => setDspMode("live")}>
@@ -812,10 +848,13 @@ export default function Home() {
                   </Ctrl>
                 </>
               )}
+              <div className="ml-auto">
+                <MaxBtn />
+              </div>
             </div>
             {dspMode === "live" ? (
               <>
-                <div className="h-[28rem] w-full">
+                <div className="chart-fill h-[28rem] w-full">
                   {t.hasIq || feature ? (
                     <Recorder
                       trailRef={t.trailRef}

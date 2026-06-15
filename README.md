@@ -75,7 +75,8 @@ flowchart TD
 - **Consistent, persistent UI:** controls are grouped into clearly-labelled clusters
   (parameter label vs. clickable choice), and UI settings (active tab, scope timebase,
   trigger, FFT span/window/dB/avg/view, recorder window/channels, hodograph offset/EMA)
-  persist across reloads via `localStorage`.
+  persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`4` tabs, `Enter`/`Z`
+  zero, `Space` run/hold) and per-chart fullscreen (`⛶`).
 - **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
   coding assistants (read frames, analyze phase/spectrum, push config).
 

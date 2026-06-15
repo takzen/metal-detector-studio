@@ -41,3 +41,19 @@ select:not(:disabled),
 input[type="range"]:not(:disabled) {
   cursor: pointer;
 }
+
+/* Chart maximize: a card put into the browser Fullscreen API fills the screen as a
+   flex column so its chart area (.chart-fill) grows to use all the space. The chart
+   components resize themselves via ResizeObserver. */
+.card-max:fullscreen {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  background: var(--panel);
+  padding: 1rem;
+}
+.card-max:fullscreen .chart-fill {
+  flex: 1 1 0%;
+  height: auto;
+  min-height: 0;
+}
