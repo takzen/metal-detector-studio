@@ -18,10 +18,13 @@ const Q29 = 2 ** 29;
 // Real DISC low-pass biquad coefficients (Q29) from mode_dynamic.c BP_LPF[].
 const DISC_BIQUAD = { b0: 977174, b1: 1954348, b2: 977174, a1: -1007033236, a2: 474071020 };
 
-// Real PROS variable-SAT alpha table (Q15), levels 1..20, from mode_pros.c.
+// Real SAT alpha tables (Q15), levels 1..20.
 const PROS_SAT_ALPHA = [
   13, 16, 21, 27, 34, 44, 56, 72, 92, 118, 151, 193, 247, 316, 404, 517, 661, 846, 950, 999,
-];
+]; // mode_pros.c (VSAT — faster geometric scale)
+const DEEP_SAT_ALPHA = [
+  3, 4, 5, 7, 9, 12, 15, 20, 26, 34, 45, 59, 77, 101, 133, 174, 228, 298, 391, 512,
+]; // mode_static.c (DEEP SAT high-pass tracker)
 
 type Kind = "ema" | "lp2" | "bp" | "biquad" | "sat";
 
@@ -147,13 +150,29 @@ function makePlot(
   return new uPlot(opts, [[]] as unknown as uPlot.AlignedData, host);
 }
 
-// Real firmware filters, selectable as presets.
-const PRESETS: { id: string; label: string; kind: Kind; shift1?: number; shift2?: number; sat?: number; note: string }[] = [
-  { id: "deep", label: "DEEP / PIN / PROS LP", kind: "lp2", shift1: 5, note: "2-pole EMA cascade, shift 5 (lp → lp2)" },
-  { id: "disc", label: "DISC LP", kind: "biquad", note: "2nd-order Butterworth biquad (Q29)" },
-  { id: "bp", label: "MXT band-pass", kind: "bp", shift1: 3, shift2: 3, note: "EMA pair, shift 3 / 3 — bp = 2·(s1−s2)" },
-  { id: "delta", label: "MXT δ (EMA s3)", kind: "ema", shift1: 3, note: "single-pole EMA, shift 3" },
-  { id: "sat", label: "SAT / VSAT", kind: "sat", sat: 10, note: "variable-α self-tune (PROS_SAT_ALPHA)" },
+type SatTable = "pros" | "deep";
+
+// Real, instantiated firmware filters (from ema_init / ema_a_init / biquad_set in
+// src/modes/*). NOTE: the band-pass pair and shift-3 EMA documented in filters.h
+// are MXT-reference building blocks — not instantiated in any active mode — so
+// they are intentionally NOT listed here.
+const PRESETS: {
+  id: string;
+  label: string;
+  kind: Kind;
+  shift1?: number;
+  sat?: number;
+  satTable?: SatTable;
+  note: string;
+}[] = [
+  { id: "deeplp", label: "DEEP/PIN/PROS LP", kind: "lp2", shift1: 5, note: "2-pole EMA cascade, shift 5 (lp → lp2)" },
+  { id: "disc", label: "DISC LP", kind: "biquad", note: "2nd-order Butterworth biquad (Q29 BP_LPF)" },
+  { id: "discbase", label: "DISC baseline", kind: "ema", shift1: 10, note: "slow ground baseline EMA, shift 10 (~0.16 Hz)" },
+  { id: "discmhp", label: "DISC motion-HP", kind: "ema", shift1: 7, note: "motion tracker EMA, shift 7 (HP = |A| − this)" },
+  { id: "ground", label: "ground track", kind: "ema", shift1: 9, note: "DISC ground tracker EMA, shift 9" },
+  { id: "pinavg", label: "PIN average", kind: "ema", shift1: 8, note: "pinpoint averaging EMA, shift 8" },
+  { id: "deepsat", label: "DEEP SAT (HPF)", kind: "sat", satTable: "deep", sat: 10, note: "SAT self-tune α (SAT_ALPHA)" },
+  { id: "prossat", label: "PROS VSAT", kind: "sat", satTable: "pros", sat: 10, note: "variable SAT α (PROS_SAT_ALPHA)" },
 ];
 
 export function FilterLab() {
@@ -161,19 +180,21 @@ export function FilterLab() {
   const [shift1, setShift1] = useState(5);
   const [shift2, setShift2] = useState(3);
   const [satLevel, setSatLevel] = useState(10); // 1..20
+  const [satTable, setSatTable] = useState<SatTable>("pros");
   const [fs, setFs] = useState(1000);
 
   const applyPreset = (p: (typeof PRESETS)[number]) => {
     setKind(p.kind);
     if (p.shift1 != null) setShift1(p.shift1);
-    if (p.shift2 != null) setShift2(p.shift2);
     if (p.sat != null) setSatLevel(p.sat);
+    if (p.satTable != null) setSatTable(p.satTable);
   };
 
   const { impData, frData, fc3, fc6, settlingMs, overshootPct, coeffText } = useMemo(() => {
     const a1 = 1 / 2 ** shift1;
     const a2 = 1 / 2 ** shift2;
-    const satAlpha = PROS_SAT_ALPHA[satLevel - 1] / 32768;
+    const satRaw = (satTable === "deep" ? DEEP_SAT_ALPHA : PROS_SAT_ALPHA)[satLevel - 1];
+    const satAlpha = satRaw / 32768;
     let h: number[];
     let coeff: string;
     if (kind === "ema") {
@@ -187,7 +208,7 @@ export function FilterLab() {
       coeff = `α1 = 1/2^${shift1}, α2 = 1/2^${shift2}`;
     } else if (kind === "sat") {
       h = emaImpulse(satAlpha);
-      coeff = `SAT ${satLevel}: α = ${PROS_SAT_ALPHA[satLevel - 1]}/32768 = ${satAlpha.toFixed(4)}`;
+      coeff = `${satTable === "deep" ? "DEEP SAT" : "PROS VSAT"} ${satLevel}: α = ${satRaw}/32768 = ${satAlpha.toFixed(4)}`;
     } else {
       const { b0, b1, b2, a1: ba1, a2: ba2 } = DISC_BIQUAD;
       h = biquadImpulse(b0 / Q29, b1 / Q29, b2 / Q29, ba1 / Q29, ba2 / Q29);
@@ -205,7 +226,7 @@ export function FilterLab() {
       overshootPct,
       coeffText: coeff,
     };
-  }, [kind, shift1, shift2, satLevel, fs]);
+  }, [kind, shift1, shift2, satLevel, satTable, fs]);
 
   const impHost = useRef<HTMLDivElement | null>(null);
   const frHost = useRef<HTMLDivElement | null>(null);
@@ -329,12 +350,19 @@ export function FilterLab() {
           </div>
         )}
         {kind === "sat" && (
-          <div className="flex items-center gap-1">
-            <span className={lbl}>SAT</span>
-            <button onClick={() => setSatLevel((s) => Math.max(1, s - 1))} className={btn(false)}>−</button>
-            <span className="w-6 text-center font-mono text-xs tabular-nums">{satLevel}</span>
-            <button onClick={() => setSatLevel((s) => Math.min(20, s + 1))} className={btn(false)}>+</button>
-          </div>
+          <>
+            <div className="flex items-center gap-1">
+              <span className={lbl}>SAT table</span>
+              <button onClick={() => setSatTable("deep")} className={btn(satTable === "deep")}>DEEP</button>
+              <button onClick={() => setSatTable("pros")} className={btn(satTable === "pros")}>PROS</button>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className={lbl}>level</span>
+              <button onClick={() => setSatLevel((s) => Math.max(1, s - 1))} className={btn(false)}>−</button>
+              <span className="w-6 text-center font-mono text-xs tabular-nums">{satLevel}</span>
+              <button onClick={() => setSatLevel((s) => Math.min(20, s + 1))} className={btn(false)}>+</button>
+            </div>
+          </>
         )}
         <div className="flex items-center gap-1">
           <span className={lbl}>Fs</span>
