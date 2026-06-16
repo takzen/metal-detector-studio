@@ -4,7 +4,7 @@ A real-time signal diagnostics, analysis, and visualization suite for custom met
 detector development (VLF / Pulse Induction). It connects to the detector's
 microcontroller over **USB-CDC / USART**, streams per-harmonic I/Q telemetry and raw
 ADC blocks, and renders them as a vector hodograph, virtual oscilloscope, live FFT, and
-a DSP/SAT analyzer for ground-balance and discrimination tuning.
+a DSP analyzer for ground-balance and discrimination tuning.
 
 It is a **universal bench lab**: the detector under test is described by a JSON
 **device profile**, so the same studio drives different firmwares without code changes.
@@ -17,18 +17,21 @@ It is a **universal bench lab**: the detector under test is described by a JSON
   probe): 3 simultaneous harmonics via SHE-PWM (7.8125 / 23.4375 / 39.0625 kHz),
   per-harmonic `{mag, phase}` + phase diffs (`dphase31`, `dphase51`) and raw I/Q.
 - **URD-1 / TAKTYK** — single-frequency VLF on ATxmega (USB-CDC telemetry).
+- **Example VLF** — a generic single-frequency starter profile (`example_vlf`) to copy.
 
-Adding a new detector means adding a profile (`backend/profiles/<id>.json`), not
-rewriting the PC software.
+**Bring your own detector:** copy `backend/profiles/example_vlf.json`, edit the fields,
+and check it with `uv run python -m app.validate_profile <id>`. Adding a detector is a
+profile (`backend/profiles/<id>.json`), not a PC rewrite — see
+[`backend/profiles/README.md`](backend/profiles/README.md) for the field reference and how-to.
 
 ## System Architecture
 
 ```mermaid
 %%{init: {'theme': 'dark'}}%%
 flowchart TD
-    A["Microcontroller<br>(STM32G4 / ATxmega)"] -->|"USB-CDC / USART"| B
-    B["Python Backend<br>(FastAPI · WebSocket · profiles)"] -->|"WebSocket telemetry / config"| C["Next.js Frontend<br>(React · Tailwind · uPlot)"]
-    B -->|"WebSocket"| M["MCP server<br>(stdio)"] -->|"tools"| D["AI agent<br>(Claude, …)"]
+    A["Detector MCU<br>(any)"] -->|"USB-CDC / USART"| B
+    B["Python Backend<br>FastAPI · WS · profiles"] -->|"telemetry / config"| C["Next.js Frontend<br>React · Tailwind · uPlot"]
+    B -->|"WS"| M["MCP server<br>stdio"] -->|"tools"| D["AI agent<br>Claude"]
 
     style A fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
     style B fill:#1a1a1a,stroke:#3b82f6,stroke-width:2px,color:#ffffff
@@ -90,7 +93,7 @@ Talks to real detector hardware over USB-CDC; each device is described by a JSON
 | --- | --- |
 | Telemetry contract (`schema.json` + profiles) | ✅ |
 | Backend: FastAPI + WebSocket + serial (USB-CDC) source | ✅ |
-| Frontend: dashboard (hodograph · oscilloscope · FFT · DSP/SAT) | ✅ |
+| Frontend: dashboard (hodograph · oscilloscope · FFT · DSP) | ✅ |
 | Live profile/port switching from the UI | ✅ |
 | MCP server (telemetry as AI tools) | ✅ |
 | Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
@@ -176,17 +179,29 @@ pnpm dev
 Open the printed URL (default [http://localhost:3000](http://localhost:3000)) to view the
 diagnostic suite.
 
-## Telemetry contract
+## Documentation
+
+- **[`MANUAL.md`](MANUAL.md)** — user manual: every tab and control, shortcuts, troubleshooting.
+- **[`PROTOCOL.md`](PROTOCOL.md)** — serial protocol + telemetry packet format (stream from your own MCU).
+- **[`examples/stm32/`](examples/stm32/)** — minimal STM32 streaming example.
+- **[`backend/profiles/README.md`](backend/profiles/README.md)** — device-profile reference + how to add your detector.
+
+## Telemetry contract & serial protocol
 
 The PC ↔ firmware contract is self-describing:
 
 - `backend/schema.json` — device-agnostic packet grammar (`hello`, `feature`, `raw`,
-  `config`, `config_ack`).
+  `raw_iq`, `config`, `config_ack`).
 - `backend/profiles/*.json` — concrete devices: harmonics, phase-diff definitions, raw
   ADC parameters, and stream rates.
 
 `feature` frames carry harmonics and phase diffs as keyed maps, so single- and
 multi-frequency detectors share one packet shape.
+
+**Stream from your own firmware:** the bundled serial source parses a line-based token
+ASCII stream (minimum `X:<i> Y:<q>\r\n`, plus an optional `RB:` raw I/Q block) and maps
+it onto the contract above. Full wire format + packet mapping: **[`PROTOCOL.md`](PROTOCOL.md)**;
+a minimal firmware example: **[`examples/stm32/`](examples/stm32/)**.
 
 ## AI Integration (Model Context Protocol)
 
