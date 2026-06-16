@@ -2,6 +2,14 @@
 
 import { HTTP_BASE } from "./config";
 
+/** Cumulative serial link counters from the backend reader thread. */
+export interface SerialStats {
+  connected: boolean;
+  bytes_in: number;
+  lines_ok: number;
+  lines_bad: number;
+}
+
 export interface Health {
   status: string;
   source: string;
@@ -9,6 +17,7 @@ export interface Health {
   port: string | null;
   baud: number;
   clients: number;
+  serial: SerialStats | null;
 }
 
 export interface PortInfo {

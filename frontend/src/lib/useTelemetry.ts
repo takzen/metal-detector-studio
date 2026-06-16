@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getHealth, type SerialStats } from "./api";
 import { WS_URL } from "./config";
 import type {
   ConfigAck,
@@ -13,6 +14,29 @@ import type {
 } from "./types";
 
 export type ConnStatus = "connecting" | "open" | "closed";
+
+/** Live link-quality metrics (drops, jitter, throughput, real-vs-declared rates). */
+export interface LinkStats {
+  /** WebSocket throughput to the browser. */
+  wsKibPerSec: number;
+  /** Age of the most recent telemetry frame (stall detector). */
+  ageMs: number;
+  feature: { hz: number; recv: number; drops: number; dropPct: number; jitterMs: number };
+  /** Raw I/Q stream: measured samples/s vs the firmware-declared sample rate. */
+  iq: { samplesPerSec: number; fsDeclared: number; drops: number; dropPct: number };
+  /** Serial-wire counters (null when the active source has no physical link). */
+  serial: { connected: boolean; bytesPerSec: number; badPerSec: number; badTotal: number } | null;
+}
+
+function emptyLink(): LinkStats {
+  return {
+    wsKibPerSec: 0,
+    ageMs: 0,
+    feature: { hz: 0, recv: 0, drops: 0, dropPct: 0, jitterMs: 0 },
+    iq: { samplesPerSec: 0, fsDeclared: 0, drops: 0, dropPct: 0 },
+    serial: null,
+  };
+}
 
 const TRAIL_MAX = 2048; // recent feature frames kept for the hodograph trail
 const IQ_MAX = 4096; // rolling 1 kHz I/Q buffer (~4 s) — scope/FFT + trigger pre/post room
@@ -36,6 +60,7 @@ export interface Telemetry {
   iqCountRef: React.RefObject<number>;
   hasIq: boolean;
   stats: { featureHz: number; rawHz: number; lastAck: ConfigAck | null };
+  link: LinkStats;
   sendConfig: (key: string, value: unknown) => void;
 }
 
@@ -52,6 +77,7 @@ export function useTelemetry(): Telemetry {
   });
 
   const [hasIq, setHasIq] = useState(false);
+  const [link, setLink] = useState<LinkStats>(emptyLink);
 
   const wsRef = useRef<WebSocket | null>(null);
   const featureRef = useRef<FeatureFrame | null>(null);
@@ -71,6 +97,20 @@ export function useTelemetry(): Telemetry {
   // arrival timestamps for rate measurement (sliding window; data can arrive bursty)
   const featTimes = useRef<number[]>([]);
   const rawTimes = useRef<number[]>([]);
+
+  // link-quality tracking. Drops are inferred from gaps in the per-stream `seq`
+  // counter (a frame dropped at the hub or on the WS leaves a hole). recv/drops
+  // are cumulative for the session so the headline drop% reflects the whole run.
+  const featSeqRef = useRef(-1);
+  const featDropRef = useRef(0);
+  const featRecvRef = useRef(0);
+  const iqSeqRef = useRef(-1);
+  const iqDropRef = useRef(0);
+  const iqRecvRef = useRef(0);
+  const wsBytesRef = useRef(0); // chars received since the last rate tick
+  const lastMsgRef = useRef(0); // perf.now() of the last telemetry frame
+  const serialStatRef = useRef<SerialStats | null>(null); // latest /api/health snapshot
+  const serialRateRef = useRef<{ bytesPerSec: number; badPerSec: number } | null>(null);
 
   const sendConfig = useCallback((key: string, value: unknown) => {
     const ws = wsRef.current;
@@ -96,9 +136,11 @@ export function useTelemetry(): Telemetry {
       };
 
       ws.onmessage = (ev) => {
+        const dataStr = ev.data as string;
+        wsBytesRef.current += dataStr.length;
         let msg: ServerMessage;
         try {
-          msg = JSON.parse(ev.data as string);
+          msg = JSON.parse(dataStr);
         } catch {
           return;
         }
@@ -112,6 +154,9 @@ export function useTelemetry(): Telemetry {
             iqQRef.current = [];
             iqCountRef.current = 0;
             featSmoothRef.current = null;
+            // a hello marks a (re)bind to a source — its seq counters restart at 0
+            featSeqRef.current = -1;
+            iqSeqRef.current = -1;
             setHasIq(false);
             break;
           }
@@ -125,7 +170,15 @@ export function useTelemetry(): Telemetry {
             const trail = trailRef.current;
             trail.push(f);
             if (trail.length > TRAIL_MAX) trail.splice(0, trail.length - TRAIL_MAX);
-            featTimes.current.push(performance.now());
+            const now = performance.now();
+            featTimes.current.push(now);
+            lastMsgRef.current = now;
+            // drop detection: a forward jump in seq means frames went missing
+            if (featSeqRef.current >= 0 && f.seq > featSeqRef.current + 1) {
+              featDropRef.current += f.seq - featSeqRef.current - 1;
+            }
+            featSeqRef.current = f.seq;
+            featRecvRef.current += 1;
             // EMA smoothing for the readable numeric readouts
             const A = 0.15;
             const sm = featSmoothRef.current ?? { i: {}, q: {}, extras: {} };
@@ -144,6 +197,7 @@ export function useTelemetry(): Telemetry {
           case "raw": {
             rawRef.current = msg as RawBlock;
             rawTimes.current.push(performance.now());
+            lastMsgRef.current = performance.now();
             break;
           }
           case "raw_iq": {
@@ -158,7 +212,14 @@ export function useTelemetry(): Telemetry {
             if (bi.length > IQ_MAX) bi.splice(0, bi.length - IQ_MAX);
             if (bq.length > IQ_MAX) bq.splice(0, bq.length - IQ_MAX);
             iqCountRef.current += b.i.length;
-            rawTimes.current.push(performance.now());
+            const nowIq = performance.now();
+            rawTimes.current.push(nowIq);
+            lastMsgRef.current = nowIq;
+            if (iqSeqRef.current >= 0 && b.seq > iqSeqRef.current + 1) {
+              iqDropRef.current += b.seq - iqSeqRef.current - 1;
+            }
+            iqSeqRef.current = b.seq;
+            iqRecvRef.current += 1;
             setHasIq(true); // no-op once already true
             break;
           }
@@ -189,6 +250,46 @@ export function useTelemetry(): Telemetry {
     };
   }, []);
 
+  // --- poll /api/health for serial-wire counters; delta them into rates ---
+  useEffect(() => {
+    let alive = true;
+    let prev: { bytes: number; bad: number; t: number } | null = null;
+    const poll = async () => {
+      try {
+        const h = await getHealth();
+        if (!alive) return;
+        serialStatRef.current = h.serial;
+        if (h.serial) {
+          const now = performance.now();
+          if (prev) {
+            const dt = (now - prev.t) / 1000;
+            if (dt > 0) {
+              serialRateRef.current = {
+                bytesPerSec: Math.max(0, (h.serial.bytes_in - prev.bytes) / dt),
+                badPerSec: Math.max(0, (h.serial.lines_bad - prev.bad) / dt),
+              };
+            }
+          }
+          prev = { bytes: h.serial.bytes_in, bad: h.serial.lines_bad, t: now };
+        } else {
+          serialRateRef.current = null;
+          prev = null;
+        }
+      } catch {
+        if (!alive) return;
+        serialStatRef.current = null;
+        serialRateRef.current = null;
+        prev = null;
+      }
+    };
+    void poll();
+    const id = setInterval(() => void poll(), 1500);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
   // --- rAF: flush throttled state + compute rates over a sliding window ---
   useEffect(() => {
     const RATE_WINDOW_MS = 2000; // average over 2 s so bursty arrival reads smoothly
@@ -196,6 +297,8 @@ export function useTelemetry(): Telemetry {
     let af = 0;
     let lastRate = performance.now();
     let lastDisp = performance.now();
+    let prevIqCount = iqCountRef.current;
+    let prevIqTime = performance.now();
     const tick = () => {
       const now = performance.now();
       if (now - lastDisp >= DISP_MS) {
@@ -217,6 +320,7 @@ export function useTelemetry(): Telemetry {
       }
 
       if (now - lastRate >= 300) {
+        const dt = now - lastRate;
         lastRate = now;
         const cut = now - RATE_WINDOW_MS;
         const ft = featTimes.current;
@@ -224,7 +328,69 @@ export function useTelemetry(): Telemetry {
         while (ft.length && ft[0] < cut) ft.shift();
         while (rt.length && rt[0] < cut) rt.shift();
         const win = RATE_WINDOW_MS / 1000;
-        setStats((s) => ({ ...s, featureHz: ft.length / win, rawHz: rt.length / win }));
+        const featureHz = ft.length / win;
+        const rawHz = rt.length / win;
+        setStats((s) => ({ ...s, featureHz, rawHz }));
+
+        // --- link quality (computed on the same cadence) ---
+        const wsBytes = wsBytesRef.current;
+        wsBytesRef.current = 0;
+        const wsBytesPerSec = dt > 0 ? (wsBytes * 1000) / dt : 0;
+
+        // feature inter-arrival jitter = stddev of consecutive gaps over the window
+        let jitterMs = 0;
+        if (ft.length > 2) {
+          let mean = 0;
+          for (let k = 1; k < ft.length; k++) mean += ft[k] - ft[k - 1];
+          mean /= ft.length - 1;
+          let v = 0;
+          for (let k = 1; k < ft.length; k++) {
+            const d = ft[k] - ft[k - 1] - mean;
+            v += d * d;
+          }
+          jitterMs = Math.sqrt(v / (ft.length - 1));
+        }
+
+        // measured I/Q sample rate vs the firmware-declared fs
+        const ic = iqCountRef.current;
+        const iqDt = (now - prevIqTime) / 1000;
+        const iqSps = iqDt > 0 ? Math.max(0, (ic - prevIqCount) / iqDt) : 0;
+        prevIqCount = ic;
+        prevIqTime = now;
+
+        const ageMs = lastMsgRef.current ? now - lastMsgRef.current : 0;
+        const fRecv = featRecvRef.current;
+        const fDrop = featDropRef.current;
+        const iRecv = iqRecvRef.current;
+        const iDrop = iqDropRef.current;
+        const ss = serialStatRef.current;
+        const sr = serialRateRef.current;
+
+        setLink({
+          wsKibPerSec: wsBytesPerSec / 1024,
+          ageMs,
+          feature: {
+            hz: featureHz,
+            recv: fRecv,
+            drops: fDrop,
+            dropPct: fRecv + fDrop > 0 ? (100 * fDrop) / (fRecv + fDrop) : 0,
+            jitterMs,
+          },
+          iq: {
+            samplesPerSec: iqSps,
+            fsDeclared: iqFsRef.current || 0,
+            drops: iDrop,
+            dropPct: iRecv + iDrop > 0 ? (100 * iDrop) / (iRecv + iDrop) : 0,
+          },
+          serial: ss
+            ? {
+                connected: ss.connected,
+                bytesPerSec: sr?.bytesPerSec ?? 0,
+                badPerSec: sr?.badPerSec ?? 0,
+                badTotal: ss.lines_bad,
+              }
+            : null,
+        });
       }
       af = requestAnimationFrame(tick);
     };
@@ -247,6 +413,7 @@ export function useTelemetry(): Telemetry {
     iqCountRef,
     hasIq,
     stats,
+    link,
     sendConfig,
   };
 }

@@ -128,6 +128,7 @@ def create_app() -> FastAPI:
             "port": app.state.port,
             "baud": app.state.baud,
             "clients": app.state.hub.client_count,
+            "serial": app.state.source.link_stats(),
         }
 
     @app.get("/api/schema")

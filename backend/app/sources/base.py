@@ -37,6 +37,14 @@ class TelemetrySource(abc.ABC):
             detail="config not supported by this source",
         )
 
+    def link_stats(self) -> dict | None:
+        """Optional link-quality counters (on-wire bytes, parse errors).
+
+        Cumulative since the source was created. ``None`` when the source has no
+        physical link to report (e.g. a purely synthetic producer).
+        """
+        return None
+
     async def aclose(self) -> None:
         """Release resources (serial ports, tasks). Default: no-op."""
         return None

@@ -88,6 +88,13 @@ class SerialSource(TelemetrySource):
         self.port = port
         self.baud = baud
         self._hid = profile.harmonic_ids[0]  # single-harmonic device
+        # link-quality counters (cumulative; read by /api/health for the link panel).
+        # Plain ints updated from the reader thread — the GIL makes each store atomic,
+        # and a slightly torn snapshot is fine for a diagnostics readout.
+        self._connected = False
+        self._bytes_in = 0
+        self._lines_ok = 0
+        self._lines_bad = 0
 
     def _reader_loop(self, q: deque[_Item], stop: threading.Event) -> None:
         """Blocking serial read in a background thread (continuous on Windows)."""
@@ -95,14 +102,17 @@ class SerialSource(TelemetrySource):
             try:
                 ser = serial.Serial(self.port, self.baud, timeout=0.02)
             except serial.SerialException:
+                self._connected = False
                 time.sleep(1.0)
                 continue
+            self._connected = True
             buf = ""
             try:
                 while not stop.is_set():
                     data = ser.read(256)
                     if not data:
                         continue
+                    self._bytes_in += len(data)
                     buf += data.decode("ascii", errors="ignore")
                     *lines, buf = buf.split("\n")
                     if len(buf) > 8192:
@@ -111,19 +121,28 @@ class SerialSource(TelemetrySource):
                         line = raw_line.strip()
                         if not line:
                             continue
+                        # Count only lines that *claim* to be telemetry (RB:/X:) as ok/bad,
+                        # so boot banners and stray text don't inflate the error rate.
                         if line.startswith("RB:"):
                             parsed = _parse_raw(line)
                             if parsed:
                                 q.append(("iq", parsed))
+                                self._lines_ok += 1
+                            else:
+                                self._lines_bad += 1
                         elif line.startswith("X:"):
                             f = _parse_feature(line)
                             if "X" in f and "Y" in f:
                                 q.append(("f", f))
+                                self._lines_ok += 1
+                            else:
+                                self._lines_bad += 1
                         if len(q) > 1000:
                             q.popleft()
             except serial.SerialException:
                 pass
             finally:
+                self._connected = False
                 ser.close()
             time.sleep(0.5)
 
@@ -165,3 +184,11 @@ class SerialSource(TelemetrySource):
         return FeatureFrame(
             seq=seq, t=time.monotonic(), harmonics=harmonics, phase_diffs={}, extras=extras
         )
+
+    def link_stats(self) -> dict:
+        return {
+            "connected": self._connected,
+            "bytes_in": self._bytes_in,
+            "lines_ok": self._lines_ok,
+            "lines_bad": self._lines_bad,
+        }

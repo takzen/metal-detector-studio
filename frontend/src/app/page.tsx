@@ -3,10 +3,12 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { FilterLab } from "@/components/FilterLab";
 import { Hodograph } from "@/components/Hodograph";
+import { PhaseLab } from "@/components/PhaseLab";
 import { IQScope, type TrigMode, type TrigSrc } from "@/components/IQScope";
 import { IQSpectrum, type SpectralPeak } from "@/components/IQSpectrum";
 import { pow2Floor, type WindowType } from "@/lib/fft";
 import { IQWaterfall } from "@/components/IQWaterfall";
+import { LinkPanel } from "@/components/LinkPanel";
 import { Recorder, type RecChannel } from "@/components/Recorder";
 import { Scope } from "@/components/Scope";
 import { SourceControls } from "@/components/SourceControls";
@@ -29,9 +31,10 @@ const ENBW: Record<WindowType, number> = { rect: 1.0, hann: 1.5, hamming: 1.36, 
 const THRESHOLD_DAC_FULL = 4000 / 3;
 const thresholdMenu = (dac: number) => Math.round((dac * 200) / THRESHOLD_DAC_FULL);
 
-type TabId = "hodograph" | "scope" | "fft" | "dsp";
+type TabId = "hodograph" | "phase" | "scope" | "fft" | "dsp";
 const TABS: { id: TabId; label: string }[] = [
   { id: "hodograph", label: "XY hodograph" },
+  { id: "phase", label: "I/Q phase" },
   { id: "scope", label: "Oscilloscope" },
   { id: "fft", label: "Live FFT" },
   { id: "dsp", label: "DSP" },
@@ -221,10 +224,17 @@ function RawUnavailable() {
 
 export default function Home() {
   const t = useTelemetry();
-  const { profile, feature, raw, stats } = t;
+  const { profile, feature, raw, stats, link } = t;
+  // amber dot on the collapsed "link" header button when something's off
+  const linkSawData = link.feature.recv > 0 || link.iq.samplesPerSec > 0;
+  const linkWarn =
+    link.feature.drops > 0 ||
+    (link.serial?.badTotal ?? 0) > 0 ||
+    (t.status === "open" && linkSawData && link.ageMs > 1500);
   // Persisted UI prefs (localStorage) — survive reload. Transient run-state
   // (run/hold, pause, nonces) stays plain useState so it always starts fresh.
   const [tab, setTab] = usePersistentState<TabId>("tab", "hodograph");
+  const [showLink, setShowLink] = usePersistentState("showLink", false); // link-quality panel
   const [zeroNonce, setZeroNonce] = useState(0);
   const [scopeMs, setScopeMs] = usePersistentState("scopeMs", 500); // oscilloscope timebase (window)
   const [scopeRun, setScopeRun] = useState(true); // run / hold
@@ -321,6 +331,17 @@ export default function Home() {
             <Metric label="feature" value={`${fmt(stats.featureHz)} Hz`} />
             <Metric label="raw" value={`${fmt(stats.rawHz)} Hz`} />
             <Metric label="seq" value={feature ? String(feature.seq) : "—"} w="w-24" />
+            <button
+              onClick={() => setShowLink((v) => !v)}
+              title="link quality: throughput, drops, jitter, real vs declared rate, serial parse errors"
+              className="flex w-16 flex-col text-left"
+            >
+              <span className="text-[11px] uppercase tracking-wide text-muted">link</span>
+              <span className="inline-flex items-center gap-1 font-mono text-sm">
+                {linkWarn && <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />}
+                <span className={linkWarn ? "text-amber-400" : "text-muted"}>{showLink ? "hide" : "show"}</span>
+              </span>
+            </button>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
@@ -344,6 +365,7 @@ export default function Home() {
           </nav>
           <SourceControls />
         </div>
+        {showLink && <LinkPanel link={link} profile={profile} status={t.status} />}
       </header>
 
       {/* Active view */}
@@ -535,6 +557,16 @@ export default function Home() {
               </Card>
             </div>
           </div>
+        )}
+
+        {tab === "phase" && (
+          <Card className="card-max flex flex-col">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-medium text-muted">I/Q phase — axis auto-calibration (sandbox)</h2>
+              <MaxBtn />
+            </div>
+            <PhaseLab />
+          </Card>
         )}
 
         {tab === "scope" && (
