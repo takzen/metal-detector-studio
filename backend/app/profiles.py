@@ -2,7 +2,7 @@
 
 A *profile* (``profiles/<id>.json``) is the concrete description of one detector:
 its harmonics, phase-diff definitions, raw-ADC parameters, stream rates, allowed
-config keys, and the synthetic-source model. The backend stays device-agnostic by
+config keys, and an optional synthetic-source model. The backend stays device-agnostic by
 reading everything from the active profile rather than hardcoding device specifics.
 """
 
@@ -88,7 +88,7 @@ class Profile(BaseModel):
     raw: RawSpec
     stream: StreamSpec
     config_keys: list[str] = Field(default_factory=list)
-    synth: SynthSpec
+    synth: SynthSpec | None = None  # legacy synthetic-source params (optional; real-device profiles omit it)
 
     @model_validator(mode="after")
     def _check_references(self) -> "Profile":
@@ -105,16 +105,17 @@ class Profile(BaseModel):
                     f"phase_diff {pd.name!r} references unknown harmonic(s): {sorted(missing)}"
                 )
 
-        missing_ground = ids - set(self.synth.ground)
-        if missing_ground:
-            raise ValueError(f"synth.ground missing harmonic(s): {sorted(missing_ground)}")
+        if self.synth is not None:
+            missing_ground = ids - set(self.synth.ground)
+            if missing_ground:
+                raise ValueError(f"synth.ground missing harmonic(s): {sorted(missing_ground)}")
 
-        for tgt in self.synth.targets:
-            missing_resp = ids - set(tgt.response)
-            if missing_resp:
-                raise ValueError(
-                    f"synth target {tgt.name!r} missing response for: {sorted(missing_resp)}"
-                )
+            for tgt in self.synth.targets:
+                missing_resp = ids - set(tgt.response)
+                if missing_resp:
+                    raise ValueError(
+                        f"synth target {tgt.name!r} missing response for: {sorted(missing_resp)}"
+                    )
         return self
 
     @property

@@ -1,0 +1,26 @@
+{
+  "id": "example_vlf",
+  "title": "Example VLF — single-frequency template (copy me)",
+  "device": {
+    "target": "My Detector",
+    "mcu": "ATmega / STM32 / ...",
+    "transport": "usb-cdc",
+    "author": "your name",
+    "notes": "Free-form metadata. Add any keys you like (coil, firmware version, contact)."
+  },
+  "harmonics": [
+    { "id": "f1", "index": 1, "freq_hz": 14000.0 }
+  ],
+  "phase_diffs": [],
+  "extras": ["vdi", "ground", "audio", "threshold"],
+  "raw": {
+    "sample_rate_hz": 100000,
+    "block_size": 1024,
+    "dtype": "int16",
+    "adc_bits": 12,
+    "adc_vref": 3.3,
+    "fullscale_lsb": 2047
+  },
+  "stream": { "feature_hz": 50, "raw_hz": 10 },
+  "config_keys": ["gain", "mode", "noise", "sweep_period", "paused", "target"]
+}
