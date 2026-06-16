@@ -85,6 +85,23 @@ flowchart TD
 - **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
   coding assistants (read frames, analyze phase/spectrum, push config).
 
+## Screenshots
+
+### XY hodograph — I/Q vector & phase
+![XY hodograph: live I/Q vector on a signed ±180° protractor with the VDI sub-scale and phase readout](assets/1.webp)
+
+### Oscilloscope — demodulated I/Q over time
+![Virtual oscilloscope: demodulated I/Q waveform with sweep trigger and per-channel measurements](assets/2.webp)
+
+### Live FFT — spectrum & waterfall
+![Live FFT: dBFS spectrum with waterfall / spectrogram for EMI scouting](assets/3.webp)
+
+### DSP recorder — the detection chain over time
+![DSP recorder: multi-channel strip-chart of audio, threshold, ground and post-filter I/Q](assets/4.webp)
+
+### Filter lab — real firmware filters
+![Filter lab: impulse and frequency response of the actual firmware DSP filters, with metrics](assets/5.webp)
+
 ## Status
 
 Talks to real detector hardware over USB-CDC; each device is described by a JSON profile.
