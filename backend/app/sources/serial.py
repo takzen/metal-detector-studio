@@ -211,10 +211,10 @@ class SerialSource(TelemetrySource):
             stop.set()
 
     def _feature(self, seq: int, f: dict[str, float]) -> FeatureFrame:
-        # Prefer the device's ENTER-zeroed delta (DX/DY) for the hodograph so it zeroes
-        # together with the device; fall back to OX/OY, then raw X/Y.
-        i = f.get("DX", f.get("OX", f["X"]))
-        q = f.get("DY", f.get("OY", f["Y"]))
+        # Hodograph vector = RAW X/Y (same as SERVICE Xr/Yr). The studio computes its own
+        # delta vs its own zero button — the device's DX/DY delta is intentionally ignored.
+        i = f["X"]
+        q = f["Y"]
         harmonics = {
             self._hid: HarmonicSample(mag=math.hypot(i, q), phase=math.atan2(q, i), i=i, q=q)
         }

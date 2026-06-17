@@ -433,12 +433,8 @@ export default function Home() {
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={zeroNow}
-                    title="zero now: snap the centre to the current vector (keyboard: Enter or Z). Border flashes red when the detector is zeroed in hardware (ENTER)."
-                    className={`rounded-md border px-3 py-1 text-xs font-medium text-foreground transition-colors ${
-                      t.deviceZeroFlash
-                        ? "border-red-500 bg-red-500/20"
-                        : "border-accent/60 bg-accent/10 hover:bg-accent/20"
-                    }`}
+                    title="zero now: snap the centre to the current raw vector (keyboard: Enter or Z). Studio-side zero — the delta is computed here from raw."
+                    className="rounded-md border border-accent/60 bg-accent/10 px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent/20"
                   >
                     zero (Enter)
                   </button>
@@ -473,9 +469,9 @@ export default function Home() {
                   <Ctrl label="EMA">
                     <input
                       type="range"
-                      min={0.05}
+                      min={0.01}
                       max={1}
-                      step={0.05}
+                      step={0.01}
                       value={ema}
                       onChange={(e) => setEma(Number(e.target.value))}
                       title="live-vector smoothing: lower = smoother/slower, higher = faster"
@@ -502,7 +498,10 @@ export default function Home() {
                 <div className="pointer-events-none absolute left-3 top-2 flex flex-col gap-0.5">
                   {profile?.harmonics.map((h, i) => {
                     const s = feature?.harmonics[h.id];
-                    const deg = s ? Math.atan2(s.q, s.i) * DEG : null; // -180..+180
+                    const z = zeroBase[h.id];
+                    const di = s ? s.i - (z?.i ?? 0) : null;
+                    const dq = s ? s.q - (z?.q ?? 0) : null;
+                    const deg = di != null && dq != null ? Math.atan2(dq, di) * DEG : null; // -180..+180
                     return (
                       <span
                         key={h.id}
@@ -518,7 +517,10 @@ export default function Home() {
                 <div className="pointer-events-none absolute right-3 top-2 flex flex-col items-end gap-0.5">
                   {profile?.harmonics.map((h) => {
                     const s = feature?.harmonics[h.id];
-                    const vdi = s ? wrap180(Math.atan2(s.q, s.i) * DEG - 90) : null;
+                    const z = zeroBase[h.id];
+                    const di = s ? s.i - (z?.i ?? 0) : null;
+                    const dq = s ? s.q - (z?.q ?? 0) : null;
+                    const vdi = di != null && dq != null ? wrap180(Math.atan2(dq, di) * DEG - 90) : null;
                     return (
                       <span
                         key={h.id}
@@ -559,49 +561,37 @@ export default function Home() {
                           </span>
                           <InfoPopover title="Where these values come from">
                             <p>
-                              <span className="font-mono text-foreground">I / Q</span> — the detector&apos;s
-                              delta vector. Firmware sends the ENTER-zeroed delta{" "}
-                              <code className={CODE_CLS}>DX/DY</code> (else ground-tracked{" "}
-                              <code className={CODE_CLS}>OX/OY</code>, else raw{" "}
-                              <code className={CODE_CLS}>X/Y</code>).
+                              <span className="font-mono text-foreground">I / Q</span> = raw{" "}
+                              <code className={CODE_CLS}>X/Y</code> (SERVICE Xr/Yr) minus the studio zero —
+                              the delta the hodograph draws. The device&apos;s own DX/DY is not used.
                             </p>
                             <p>
                               <span className="font-mono text-foreground">mag</span> = √(I²+Q²) ·{" "}
                               <span className="font-mono text-foreground">phase</span> = atan2(Q, I).
                             </p>
                             <p>
-                              Smoothed (EMA, ~4×/s) for readability; the live vector tip on the
-                              hodograph is instantaneous.
-                            </p>
-                            <p>
-                              <span className="text-foreground">Zeroing:</span> the detector&apos;s{" "}
-                              <span className="text-foreground">ENTER</span> rezeros these (it changes
-                              DX/DY at the source, so the cards and the plot move together). The
-                              hodograph <span className="text-foreground">“zero”</span> button only
-                              recenters the view — it shifts the <span className="text-foreground">Δ</span> rows
-                              below, not the absolute values above.
-                            </p>
-                            <p>
-                              <span className="text-foreground">Δ since plot zero</span> = the vector from
-                              that zero to now — exactly what the hodograph draws (Δmag/Δphase = its length
-                              and angle).
+                              Press <span className="text-foreground">zero</span> (Enter / Z) to set the
+                              reference; values are smoothed (EMA) for readability.
                             </p>
                           </InfoPopover>
                         </span>
                       </div>
-                      <div className="mt-3 grid grid-cols-2 gap-y-2">
-                        <Stat label="mag" value={s ? fmt(s.mag) : "—"} />
-                        <Stat label="phase" value={s ? `${fmt(s.phase * DEG)}°` : "—"} />
-                        <Stat label="I" value={s ? fmt(s.i) : "—"} />
-                        <Stat label="Q" value={s ? fmt(s.q) : "—"} />
+                      <div className="mt-3">
+                        <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">raw (absolute, Xr/Yr)</div>
+                        <div className="grid grid-cols-2 gap-y-2">
+                          <Stat label="mag" value={s ? fmt(s.mag) : "—"} />
+                          <Stat label="phase" value={s ? `${fmt(s.phase * DEG)}°` : "—"} />
+                          <Stat label="I" value={s ? fmt(s.i) : "—"} />
+                          <Stat label="Q" value={s ? fmt(s.q) : "—"} />
+                        </div>
                       </div>
                       <div className="mt-2 border-t border-border pt-2">
-                        <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">Δ since plot zero</div>
+                        <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">delta (vs zero)</div>
                         <div className="grid grid-cols-2 gap-y-2">
-                          <Stat label="Δmag" value={dMag != null ? fmt(dMag) : "—"} />
-                          <Stat label="Δphase" value={dPhase != null ? `${fmt(dPhase)}°` : "—"} />
-                          <Stat label="ΔI" value={dI != null ? fmt(dI) : "—"} />
-                          <Stat label="ΔQ" value={dQ != null ? fmt(dQ) : "—"} />
+                          <Stat label="mag" value={dMag != null ? fmt(dMag) : "—"} />
+                          <Stat label="phase" value={dPhase != null ? `${fmt(dPhase)}°` : "—"} />
+                          <Stat label="I" value={dI != null ? fmt(dI) : "—"} />
+                          <Stat label="Q" value={dQ != null ? fmt(dQ) : "—"} />
                         </div>
                       </div>
                     </Card>
