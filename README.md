@@ -51,7 +51,13 @@ flowchart TD
   **demodulator phase-offset** axis
   marks a re-tuned coordinate without altering the measured phase. A **VDI sub-scale** on the
   upper half maps phase 0 / 90 / 180° to −90 / 0 / +90, shown on the dial and as a large
-  top-right readout mirroring the phase angle (top-left).
+  top-right readout mirroring the phase angle (top-left). The delta is computed **in the
+  studio from the raw X/Y** against a studio-side zero (the device's own delta is ignored);
+  cards show both **raw (absolute)** and **delta (vs zero)**. A **SwingTune** mode (live /
+  swing) reproduces the detector's SERVICE1 automat — it captures the peak of each coil
+  swing and reports the **median phase** of the last swings (±90°, drift-cancelled), the
+  repeatable reading for tuning. A settable **factory ground-balance reference line** (0–5°)
+  can be overlaid on the dial.
 - **Virtual Oscilloscope:** real-time time-domain plot with timebase (50 ms–2 s),
   auto/manual vertical scale, and run/hold. A **sweep trigger** (auto / normal / single-shot,
   source I / Q / |IQ|, rising or falling edge, auto-placed or draggable level line) holds a
@@ -63,6 +69,12 @@ flowchart TD
   Hamming / Blackman / flat-top, with live RBW), adjustable dB floor, **EMA averaging**,
   **max-hold**, 50 Hz mains reference lines, and a **waterfall / spectrogram** view (line,
   waterfall, or both) with a peak marker.
+- **ADC scope (converter characterization):** FFT of the raw single-channel ADC dump
+  (full 18-bit, no demod / boxcar / truncation) with live **noise metrics** — SNR, ENOB,
+  RMS in LSB/µV, noise floor, FFT processing gain, **narrow-band SNR** (per the analysis
+  bandwidth), and the strongest spur — plus copy-to-clipboard and a help popover. Lets you
+  separate the converter's own noise from the analog front end (short the input vs. live
+  chain). Fed by a raw ADC block the firmware streams while full telemetry is enabled.
 - **DSP Analyzer:** a multi-channel strip-chart recorder — each signal on its own lane
   (per-channel auto, lock, or fixed scale): **audio** (the signal-strength indicator) with the
   **threshold** floor overlaid on the same 0..4000 scale, **ground** (post-correction
@@ -80,7 +92,7 @@ flowchart TD
 - **Consistent, persistent UI:** controls are grouped into clearly-labelled clusters
   (parameter label vs. clickable choice), and UI settings (active tab, scope timebase,
   trigger, FFT span/window/dB/avg/view, recorder window/channels, hodograph offset/EMA)
-  persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`4` tabs, `Enter`/`Z`
+  persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`6` tabs, `Enter`/`Z`
   zero, `Space` run/hold), per-chart fullscreen (`⛶`) and PNG export.
 - **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
   coding assistants (read frames, analyze phase/spectrum, push config).
@@ -208,7 +220,7 @@ diagnostic suite.
 The PC ↔ firmware contract is self-describing:
 
 - `backend/schema.json` — device-agnostic packet grammar (`hello`, `feature`, `raw`,
-  `raw_iq`, `config`, `config_ack`).
+  `raw_iq`, `adc_raw`, `config`, `config_ack`).
 - `backend/profiles/*.json` — concrete devices: harmonics, phase-diff definitions, raw
   ADC parameters, and stream rates.
 

@@ -45,9 +45,9 @@ X:<i> Y:<q> DX:<di> DY:<dq> VDI:<id> G:<gnd> A:<audio> TH:<thr> K:<kgnd> M:<mode
 
 | Token | Meaning | Used for |
 |-------|---------|----------|
-| `X` `Y` | raw demodulated I / Q (**required**) | hodograph fallback, scope |
-| `DX` `DY` | I/Q delta vs the device's zero reference (preferred) | **hodograph** (zeroes with the device) |
-| `OX` `OY` | ground-tracked delta (fallback if no `DX`/`DY`) | hodograph |
+| `X` `Y` | raw demodulated I / Q (**required**) | **hodograph** (studio computes the delta), scope |
+| `DX` `DY` | I/Q delta vs the device's zero reference | parsed but unused (studio uses its own delta) |
+| `OX` `OY` | ground-tracked delta | parsed but unused |
 | `VDI` | target id / visual discrimination (e.g. -95..+95) | `extras.vdi` |
 | `G` | ground-corrected response | `extras.ground` |
 | `A` | audio / signal-strength level | `extras.audio` |
@@ -57,8 +57,10 @@ X:<i> Y:<q> DX:<di> DY:<dq> VDI:<id> G:<gnd> A:<audio> TH:<thr> K:<kgnd> M:<mode
 | `PX` `PY` | peak-hold \|I\| / \|Q\| | `extras.px/py` |
 | `FX` `FY` | post-filter I/Q of the active mode | DSP recorder I/Q |
 
-Hodograph vector = `DX/DY` if present, else `OX/OY`, else `X/Y`. Everything except
-`X`/`Y` is optional — a minimal device can send just `X:1234 Y:-560\r\n`.
+Hodograph vector = raw `X/Y`; the studio computes its own delta against a studio-side
+zero (the `zero` button), so the device's `DX/DY`/`OX/OY` are no longer needed for the
+plot. Everything except `X`/`Y` is optional — a minimal device can send just
+`X:1234 Y:-560\r\n`.
 
 ### Raw I/Q block (for the scope + baseband FFT, optional)
 
@@ -71,6 +73,20 @@ RB:<sample_rate_hz> <n> <i0> <q0> <i1> <q1> ... <i(n-1)> <q(n-1)>\r\n
 
 Example — 20 samples at 1 kHz: `RB:1000 20 12 -4 13 -5 ...`. The backend emits one
 `raw_iq` packet per block (feeds the Oscilloscope and Live FFT).
+
+### Raw ADC block (for the ADC scope / ENOB FFT, optional)
+
+A line that **starts with `AB:`** carrying a contiguous block of **single-channel** raw
+ADC samples (full converter resolution — no demod, boxcar or truncation), for converter
+noise / SNR / ENOB characterization:
+
+```
+AB:<sample_rate_hz> <n> <s0> <s1> ... <s(n-1)>\r\n
+```
+
+Example — 256 samples at ~22 kSPS: `AB:22000 256 131070 -4 17 ...`. The backend emits one
+`adc_raw` packet per block (feeds the **ADC scope** tab). On TAKTYK this is streamed only
+while full telemetry is enabled (SERVICE3), as a short burst every ~1 s.
 
 ### Rates & robustness
 
@@ -93,6 +109,7 @@ small JSON serial source, or to understand what the UI consumes).
 | `feature` | device→pc | per-harmonic `{mag, phase, i, q}` map + `phase_diffs` + `extras` |
 | `raw` | device→pc | raw RX ADC block (`samples: int16[]`) — scope/FFT |
 | `raw_iq` | device→pc | raw demodulated I/Q block (`i[]`, `q[]`) — scope/baseband FFT |
+| `adc_raw` | device→pc | raw single-channel ADC block (`samples: int[]`, full 18-bit) — ADC scope / ENOB |
 | `config` | pc→device | config command (`key`, `value`); allowed keys from the profile |
 | `config_ack` | device→pc | ack of a config command |
 

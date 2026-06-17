@@ -87,19 +87,30 @@ detector's SERVICE2 screen. The main tool for watching signal phase and
 - **Large phase readout** — top-left, in the harmonic's color: `atan2(Q, I)` in
   −180…+180° (smoothed to stay readable).
 - **Large VDI readout** — top-right, in the VDI sub-scale color (amber): `VDI = phase − 90°`.
-- **Signal zero** — the `zero (Enter)` button or **Enter** / **Z** sets the center to
-  the current vector. This is **not** ground balance — only a plot-reference shift.
+- **Signal zero** — the `zero (Enter)` button or **Enter** / **Z** sets the studio's zero
+  to the current raw vector; the delta (plot + cards) is measured from here. **Not** ground
+  balance, and the detector's own ENTER does not move the studio plot — zero here.
 - **persist (persistence / phosphor)** — phosphor trail: stays where the tip was and
   fades over time; spots the tip dwells on stay brighter. On a target pass the loop
   "shoots out" and returns; angle/shape depend on the metal.
 - **EMA** — live-vector smoothing slider: left = smoother/slower, right = faster
-  (`0.05…1.00`, default `0.30`).
+  (`0.01…1.00`, default `0.30`).
 - **offset** — colored overlay showing a demodulator offset: an axis at a set angle +
   a rotation mark. Buttons `−0.3 / +0.3 / 0`. **Visual only** — it does not change the
   measured phase or vectors.
+- **SwingTune (live / swing)** — phase readout mode. `live` = instantaneous delta phase
+  (±180°). `swing` = SERVICE1-style automat: it watches the delta as you swing the coil,
+  captures each swing's **peak**, takes its phase `atan2(dy, |dx|)` (±90°, ferrite at 0°),
+  and shows the **median of the last 10 swings** + a swing count `n`. The repeatable
+  reading for tuning; holds between swings; `zero` clears the series.
+- **ground** — overlays a **factory ground-balance reference line** (dashed, 0–5°) on the
+  dial. Buttons `−0.1 / +0.1 / 0` nudge the angle.
 
 Beside the hodograph:
-- **Harmonic cards** — `mag` (vector length), `phase` (°), `I`, `Q` + frequency.
+- **Harmonic cards** — two groups, each `mag` / `phase` / `I` / `Q`: **raw (absolute,
+  Xr/Yr)** = the raw vector from the device (same scale as SERVICE), and **delta (vs zero)**
+  = raw minus the studio zero (what the plot draws). The studio computes the delta itself —
+  the detector's ENTER no longer moves the studio plot; use the `zero` button here.
 - **Phase diffs** — phase differences between harmonics (e.g. `dphase31`, `dphase51`);
   key for multi-frequency discrimination. Single-frequency profiles show "none".
 - **Extras** — extra fields from the source (TAKTYK: `vdi`, `ground`, `audio`,
@@ -166,7 +177,28 @@ Controls (for the I/Q source):
   - **peaks** — *experimental, unstable* — strongest-bins list; frequencies drift,
     not very useful. Off by default.
 
-### 4. DSP — signal-chain recorder + filter analysis
+### 4. ADC scope — raw converter (noise / SNR / ENOB)
+
+FFT of the **raw single-channel ADC dump** — full 18-bit, before demodulation, the boxcar
+average or any truncation — for characterizing the converter and the analog front end.
+
+Updates only while **full telemetry is enabled on the detector** (TAKTYK: SERVICE3 → ON);
+the firmware then streams a short ADC burst (~22 kSPS, 256 samples) about once a second.
+With no such source the tab shows a "waiting…" message.
+
+Live metrics (top-right; **copy** button + **?** help):
+- **SNR** = 20·log10(full-scale-sine RMS / noise RMS); **ENOB** = (SNR − 1.76)/6.02.
+- **RMS** noise in LSB and µV (1 LSB ≈ 15.6 µV at a 4.096 V ref); **p-p** sample span.
+- **floor** — noise per FFT bin [dBFS]; sits below the SNR by the **FFT gain** = 10·log10(N/2).
+- **SNR<1k / <100** — SNR counting noise only in that band (narrower band = higher SNR).
+- **spur** — strongest bin (excl. DC); a feedthrough / interference candidate.
+
+To isolate the converter's own noise, short its input (differential 0) → ENOB jumps to the
+datasheet figure; with the live front end connected you measure the whole chain. The
+frequency axis is nominal (~22 kSPS, ±5 %); the ENOB / RMS figures are sample-rate
+independent.
+
+### 5. DSP — signal-chain recorder + filter analysis
 
 Two modes (switch at the top):
 
@@ -193,8 +225,8 @@ Two modes (switch at the top):
 
 (Inactive while the cursor is in a form field.)
 
-- **1 / 2 / 3 / 4** — switch tab (hodograph / oscilloscope / FFT / DSP).
-- **Enter** / **Z** — zero the hodograph (center = current vector).
+- **1 … 6** — switch tab (hodograph / I/Q phase / oscilloscope / FFT / ADC scope / DSP).
+- **Enter** / **Z** — zero the hodograph (studio zero = current raw vector).
 - **Space** — run/hold (oscilloscope) or play/stop (DSP recorder), per the active tab.
 
 ## Chart maximize
