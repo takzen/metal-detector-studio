@@ -76,6 +76,14 @@ export interface RawIQBlock {
   q: number[];
 }
 
+export interface RawAdcBlock {
+  type: "adc_raw";
+  seq: number;
+  t: number;
+  sample_rate_hz: number;
+  samples: number[]; // full 18-bit signed (±131071), single channel
+}
+
 export interface Hello {
   type: "hello";
   schema_version: string;
@@ -96,4 +104,10 @@ export interface ConfigAck {
   detail: string;
 }
 
-export type ServerMessage = Hello | FeatureFrame | RawBlock | RawIQBlock | ConfigAck;
+export type ServerMessage =
+  | Hello
+  | FeatureFrame
+  | RawBlock
+  | RawIQBlock
+  | RawAdcBlock
+  | ConfigAck;

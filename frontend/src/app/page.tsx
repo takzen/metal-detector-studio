@@ -1,18 +1,20 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { FilterLab } from "@/components/FilterLab";
 import { Hodograph } from "@/components/Hodograph";
 import { PhaseLab } from "@/components/PhaseLab";
 import { IQScope, type TrigMode, type TrigSrc } from "@/components/IQScope";
 import { IQSpectrum, type SpectralPeak } from "@/components/IQSpectrum";
 import { pow2Floor, type WindowType } from "@/lib/fft";
+import { InfoPopover, CODE_CLS } from "@/components/InfoPopover";
 import { IQWaterfall } from "@/components/IQWaterfall";
 import { LinkPanel } from "@/components/LinkPanel";
 import { Recorder, type RecChannel } from "@/components/Recorder";
 import { Scope } from "@/components/Scope";
 import { SourceControls } from "@/components/SourceControls";
 import { Spectrum } from "@/components/Spectrum";
+import { AdcSpectrum } from "@/components/AdcSpectrum";
 import { colorFor } from "@/lib/palette";
 import { usePersistentState } from "@/lib/usePersistentState";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
@@ -31,12 +33,13 @@ const ENBW: Record<WindowType, number> = { rect: 1.0, hann: 1.5, hamming: 1.36, 
 const THRESHOLD_DAC_FULL = 4000 / 3;
 const thresholdMenu = (dac: number) => Math.round((dac * 200) / THRESHOLD_DAC_FULL);
 
-type TabId = "hodograph" | "phase" | "scope" | "fft" | "dsp";
+type TabId = "hodograph" | "phase" | "scope" | "fft" | "adc" | "dsp";
 const TABS: { id: TabId; label: string }[] = [
   { id: "hodograph", label: "XY hodograph" },
   { id: "phase", label: "I/Q phase" },
   { id: "scope", label: "Oscilloscope" },
   { id: "fft", label: "Live FFT" },
+  { id: "adc", label: "ADC scope" },
   { id: "dsp", label: "DSP" },
 ];
 
@@ -224,7 +227,7 @@ function RawUnavailable() {
 
 export default function Home() {
   const t = useTelemetry();
-  const { profile, feature, raw, stats, link } = t;
+  const { profile, feature, raw, stats, link, featureRef } = t;
   // amber dot on the collapsed "link" header button when something's off
   const linkSawData = link.feature.recv > 0 || link.iq.samplesPerSec > 0;
   const linkWarn =
@@ -248,7 +251,7 @@ export default function Home() {
   const [fftSpan, setFftSpan] = usePersistentState<number | "full">("fftSpan", "full"); // FFT frequency span [Hz]
   const [fftView, setFftView] = usePersistentState<"line" | "waterfall" | "both">("fftView", "line"); // FFT display
   const [fftMaxHold, setFftMaxHold] = usePersistentState("fftMaxHold", false); // overlay per-bin max
-  const [fftAvg, setFftAvg] = usePersistentState("fftAvg", 1); // EMA averaging length (1 = off)
+  const [fftAvg, setFftAvg] = usePersistentState("fftAvg", 8); // EMA averaging length (1 = off); ≥8 = stable noise floor
   const [fftMains, setFftMains] = usePersistentState("fftMains", false); // 50 Hz mains reference lines
   const [fftPeaksOn, setFftPeaksOn] = usePersistentState("fftPeaksOn", false); // peak table
   const [fftPeaks, setFftPeaks] = useState<SpectralPeak[]>([]); // transient: live top-N peaks
@@ -264,6 +267,22 @@ export default function Home() {
   const [offsetDeg, setOffsetDeg] = usePersistentState("offsetDeg", 0); // demodulator phase offset (colour overlay)
   const [persistence, setPersistence] = usePersistentState("persistence", true); // hodograph phosphor trail
   const [ema, setEma] = usePersistentState("ema", 0.3); // hodograph live-vector smoothing factor
+  // Plot-zero reference per harmonic, captured when the hodograph "zero" is pressed.
+  // Lets the cards show the delta vector since that zero — exactly what the plot draws.
+  // State (not a ref) so reading it in render is valid and a new zero re-renders the cards.
+  const [zeroBase, setZeroBase] = useState<Record<string, { i: number; q: number }>>({});
+  // Zero now: snapshot the current vector as the plot-zero reference (cards' Δ rows) and bump
+  // the nonce the hodograph watches for its own zero. Done in the handler (not an effect) so it
+  // reads the latest frame at click time — idiomatic, no cascading renders.
+  const zeroNow = useCallback(() => {
+    const fr = featureRef.current;
+    if (fr) {
+      const base: Record<string, { i: number; q: number }> = {};
+      for (const id in fr.harmonics) base[id] = { i: fr.harmonics[id].i, q: fr.harmonics[id].q };
+      setZeroBase(base);
+    }
+    setZeroNonce((n) => n + 1);
+  }, [featureRef]);
 
   const recChannels = useMemo<RecChannel[]>(
     () => [
@@ -298,7 +317,7 @@ export default function Home() {
         return;
       }
       if (e.key === "Enter" || e.key.toLowerCase() === "z") {
-        setZeroNonce((n) => n + 1);
+        zeroNow();
         return;
       }
       if (e.key === " " || e.code === "Space") {
@@ -309,7 +328,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, dspMode, setTab, setScopeRun, setRecPaused]);
+  }, [tab, dspMode, setTab, setScopeRun, setRecPaused, zeroNow]);
 
   return (
     <main className="flex-1 w-full max-w-7xl mx-auto p-6">
@@ -386,13 +405,40 @@ export default function Home() {
                       ))}
                     </div>
                     <PngBtn name="hodograph" />
+                    <InfoPopover title="Reading the hodograph">
+                      <p>
+                        Each vector is a harmonic&apos;s delta I/Q from the centre (the zero): length =
+                        signal magnitude, direction = phase.
+                      </p>
+                      <p>
+                        Rim protractor = phase <code className={CODE_CLS}>atan2(Q,I)</code>; 0° sits on the
+                        LEFT (mirrored X, matching the device). Top arc 0…+180°, bottom −180…0°.
+                      </p>
+                      <p>
+                        The gold <span className="text-foreground">VDI</span> sub-scale = phase − 90°.
+                      </p>
+                      <p>
+                        <span className="text-foreground">offset</span> is a demodulator phase offset — a
+                        colour overlay only; it does not move the grid or change any readout.{" "}
+                        <span className="text-foreground">persist</span> = phosphor trail,{" "}
+                        <span className="text-foreground">EMA</span> = live-vector smoothing.
+                      </p>
+                      <p>
+                        <span className="text-foreground">zero</span> (Enter / Z) recenters the plot on the
+                        current vector — display only.
+                      </p>
+                    </InfoPopover>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={() => setZeroNonce((n) => n + 1)}
-                    title="zero now: snap the centre to the current vector (keyboard: Enter or Z)"
-                    className="rounded-md border border-accent/60 bg-accent/10 px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent/20"
+                    onClick={zeroNow}
+                    title="zero now: snap the centre to the current vector (keyboard: Enter or Z). Border flashes red when the detector is zeroed in hardware (ENTER)."
+                    className={`rounded-md border px-3 py-1 text-xs font-medium text-foreground transition-colors ${
+                      t.deviceZeroFlash
+                        ? "border-red-500 bg-red-500/20"
+                        : "border-accent/60 bg-accent/10 hover:bg-accent/20"
+                    }`}
                   >
                     zero (Enter)
                   </button>
@@ -491,9 +537,15 @@ export default function Home() {
               <div className="grid gap-4 sm:grid-cols-2">
                 {profile?.harmonics.map((h, i) => {
                   const s = feature?.harmonics[h.id];
+                  // delta vs the plot zero (matches the hodograph vector); no zero set → base 0
+                  const z = zeroBase[h.id];
+                  const dI = s ? s.i - (z?.i ?? 0) : null;
+                  const dQ = s ? s.q - (z?.q ?? 0) : null;
+                  const dMag = dI != null && dQ != null ? Math.hypot(dI, dQ) : null;
+                  const dPhase = dI != null && dQ != null ? Math.atan2(dQ, dI) * DEG : null;
                   return (
                     <Card key={h.id}>
-                      <div className="flex items-baseline justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         <span className="inline-flex items-center gap-2 font-mono">
                           <span
                             className="h-2.5 w-2.5 rounded-full"
@@ -501,8 +553,40 @@ export default function Home() {
                           />
                           {h.id}
                         </span>
-                        <span className="text-xs text-muted">
-                          h{h.index} · {(h.freq_hz / 1000).toFixed(4)} kHz
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-xs text-muted">
+                            h{h.index} · {(h.freq_hz / 1000).toFixed(4)} kHz
+                          </span>
+                          <InfoPopover title="Where these values come from">
+                            <p>
+                              <span className="font-mono text-foreground">I / Q</span> — the detector&apos;s
+                              delta vector. Firmware sends the ENTER-zeroed delta{" "}
+                              <code className={CODE_CLS}>DX/DY</code> (else ground-tracked{" "}
+                              <code className={CODE_CLS}>OX/OY</code>, else raw{" "}
+                              <code className={CODE_CLS}>X/Y</code>).
+                            </p>
+                            <p>
+                              <span className="font-mono text-foreground">mag</span> = √(I²+Q²) ·{" "}
+                              <span className="font-mono text-foreground">phase</span> = atan2(Q, I).
+                            </p>
+                            <p>
+                              Smoothed (EMA, ~4×/s) for readability; the live vector tip on the
+                              hodograph is instantaneous.
+                            </p>
+                            <p>
+                              <span className="text-foreground">Zeroing:</span> the detector&apos;s{" "}
+                              <span className="text-foreground">ENTER</span> rezeros these (it changes
+                              DX/DY at the source, so the cards and the plot move together). The
+                              hodograph <span className="text-foreground">“zero”</span> button only
+                              recenters the view — it shifts the <span className="text-foreground">Δ</span> rows
+                              below, not the absolute values above.
+                            </p>
+                            <p>
+                              <span className="text-foreground">Δ since plot zero</span> = the vector from
+                              that zero to now — exactly what the hodograph draws (Δmag/Δphase = its length
+                              and angle).
+                            </p>
+                          </InfoPopover>
                         </span>
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-y-2">
@@ -511,13 +595,34 @@ export default function Home() {
                         <Stat label="I" value={s ? fmt(s.i) : "—"} />
                         <Stat label="Q" value={s ? fmt(s.q) : "—"} />
                       </div>
+                      <div className="mt-2 border-t border-border pt-2">
+                        <div className="mb-1 text-[10px] uppercase tracking-wide text-muted">Δ since plot zero</div>
+                        <div className="grid grid-cols-2 gap-y-2">
+                          <Stat label="Δmag" value={dMag != null ? fmt(dMag) : "—"} />
+                          <Stat label="Δphase" value={dPhase != null ? `${fmt(dPhase)}°` : "—"} />
+                          <Stat label="ΔI" value={dI != null ? fmt(dI) : "—"} />
+                          <Stat label="ΔQ" value={dQ != null ? fmt(dQ) : "—"} />
+                        </div>
+                      </div>
                     </Card>
                   );
                 })}
               </div>
 
               <Card>
-                <h2 className="mb-3 text-sm font-medium text-muted">Phase diffs</h2>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-medium text-muted">Phase diffs</h2>
+                  <InfoPopover title="Phase diffs">
+                    <p>
+                      Differences between harmonics&apos; phases, in degrees — a multi-frequency
+                      discrimination cue (a target&apos;s phase shifts differently per frequency).
+                    </p>
+                    <p>
+                      Each diff is defined by the active profile (<code className={CODE_CLS}>from → to</code>).
+                      Single-frequency profiles have none.
+                    </p>
+                  </InfoPopover>
+                </div>
                 {profile?.phase_diffs.length ? (
                   <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
                     {profile.phase_diffs.map((pd) => (
@@ -534,7 +639,30 @@ export default function Home() {
               </Card>
 
               <Card>
-                <h2 className="mb-3 text-sm font-medium text-muted">Extras</h2>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-medium text-muted">Extras</h2>
+                  <InfoPopover title="Extras (firmware fields)">
+                    <p>Extra per-frame fields the firmware sends (only those present show up):</p>
+                    <p>
+                      <span className="text-foreground">audio / threshold</span> — audio output and its
+                      self-adjusting threshold (DAC 0–4000; threshold shown rescaled to the menu 0–200).
+                    </p>
+                    <p>
+                      <span className="text-foreground">ground / kgnd</span> — ground-balance tracking value
+                      / coefficient · <span className="text-foreground">mode</span> — active program
+                      (DEEP/DISC/RELIC/PIN/PROS).
+                    </p>
+                    <p>
+                      <span className="text-foreground">fx / fy</span> — I/Q after the active mode&apos;s
+                      filter (what the recorder plots) · <span className="text-foreground">px / py</span>,{" "}
+                      <span className="text-foreground">x_raw / y_raw</span> — device PX/PY and raw pre-zero
+                      X/Y · <span className="text-foreground">vdi</span> — device VDI.
+                    </p>
+                    <p>
+                      Tokens on the wire: <code className={CODE_CLS}>A TH G K M FX FY PX PY X Y VDI</code>.
+                    </p>
+                  </InfoPopover>
+                </div>
                 {feature && Object.keys(feature.extras).length ? (
                   <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
                     {Object.entries(feature.extras).map(([k, v]) => (
@@ -563,7 +691,27 @@ export default function Home() {
           <Card className="card-max flex flex-col">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-sm font-medium text-muted">I/Q phase — axis auto-calibration (sandbox)</h2>
-              <MaxBtn />
+              <div className="flex items-center gap-1">
+                <InfoPopover title="I/Q axis auto-calibration">
+                  <p>
+                    A model (sliders, no live data): the physical I/Q channels are the true vector rotated
+                    by an unknown axis angle <span className="text-foreground">θ</span> (drifts with
+                    frequency / temperature).
+                  </p>
+                  <p>
+                    With no metal the probe sits on the true X axis, so{" "}
+                    <code className={CODE_CLS}>atan2(Y′,X′)</code> of that reading recovers θ
+                    (air-balance). Applying the inverse 2×2 rotation R(−θ) brings the signal back to the
+                    true frame; then phase = <code className={CODE_CLS}>atan2(Y,X)</code> drives
+                    discrimination.
+                  </p>
+                  <p>
+                    Left plot = physical (rotated), right = corrected. After “measure θ” the corrected
+                    plot lines up and “detector reads” the true phase.
+                  </p>
+                </InfoPopover>
+                <MaxBtn />
+              </div>
             </div>
             <PhaseLab />
           </Card>
@@ -575,6 +723,24 @@ export default function Home() {
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h2 className="text-sm font-medium text-muted">Virtual oscilloscope — {t.hasIq ? "demod I/Q" : "raw RX"}</h2>
                 <div className="flex items-center gap-1">
+                  <InfoPopover title="Virtual oscilloscope">
+                    <p>
+                      Plots the rolling sample buffer over time: demod{" "}
+                      <span className="text-foreground">I</span> (blue) /{" "}
+                      <span className="text-foreground">Q</span> (amber) at the device sample rate (TAKTYK
+                      ~1 kHz), or raw RX if the device streams raw ADC blocks.
+                    </p>
+                    <p>
+                      x = time [ms], y = amplitude [LSB]. <span className="text-foreground">time</span> =
+                      window length, <span className="text-foreground">volts</span> = vertical full-scale
+                      (auto or manual zoom).
+                    </p>
+                    <p>
+                      <span className="text-foreground">trig</span> (off/auto/normal/single) freezes a sweep
+                      on an edge of I/Q/|IQ|; level is auto or draggable. Tap the coil to see a target&apos;s
+                      I/Q transient.
+                    </p>
+                  </InfoPopover>
                   <PngBtn name="oscilloscope" />
                   <MaxBtn />
                 </div>
@@ -712,6 +878,22 @@ export default function Home() {
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h2 className="text-sm font-medium text-muted">Live FFT — EMI scout</h2>
                 <div className="flex items-center gap-1">
+                  <InfoPopover title="Live FFT (EMI scout)">
+                    <p>
+                      FFT of the baseband I/Q buffer → spectrum in{" "}
+                      <span className="text-foreground">dBFS</span>. The working frequencies are RF carriers
+                      (not present in baseband), so only EMI / hum (e.g. 50 Hz mains) shows here.
+                    </p>
+                    <p>
+                      <span className="text-foreground">window</span> trades resolution vs spectral leakage;{" "}
+                      <span className="text-foreground">RBW</span> = ENBW(window)·fs/N (in the legend).
+                    </p>
+                    <p>
+                      <span className="text-foreground">waterfall</span> = the same spectrum over time
+                      (newest on top), colour = |X| dBFS. <span className="text-foreground">max-hold</span> /{" "}
+                      <span className="text-foreground">avg</span> help catch or smooth interferers.
+                    </p>
+                  </InfoPopover>
                   <PngBtn name="fft" />
                   <MaxBtn />
                 </div>
@@ -765,7 +947,7 @@ export default function Home() {
                   {fftView !== "waterfall" && (
                     <>
                       <Ctrl label="avg">
-                        {[1, 4, 16].map((n) => (
+                        {[1, 4, 8, 16].map((n) => (
                           <Seg
                             key={n}
                             active={fftAvg === n}
@@ -852,6 +1034,39 @@ export default function Home() {
           </Card>
         )}
 
+        {tab === "adc" && (
+          <Card className="card-max flex flex-col">
+            <div className="mb-3">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-sm font-medium text-muted">
+                  ADC scope — raw converter (noise floor / spurs / ENOB)
+                </h2>
+                <div className="flex items-center gap-2">
+                  <PngBtn name="adc" />
+                  <MaxBtn />
+                </div>
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                Full 18-bit single-channel dump — no demod, boxcar or truncation. Enable{" "}
+                <span className="text-foreground">SERVICE3 → full telemetry</span> on the detector.
+              </p>
+            </div>
+            {t.hasAdc ? (
+              <div className="chart-fill relative h-[28rem] w-full">
+                <AdcSpectrum adcRef={t.adcRef} />
+              </div>
+            ) : (
+              <div className="flex h-[28rem] items-center justify-center text-center text-sm text-muted">
+                Waiting for an ADC dump — turn on full telemetry in SERVICE3 on the detector.
+              </div>
+            )}
+            <div className="mt-2 text-xs text-muted">
+              x: frequency [kHz] · y: |ADC| [dBFS] · blackman · ENOB from RMS noise (sample-rate
+              independent) · fs nominal ~22 kSPS
+            </div>
+          </Card>
+        )}
+
         {tab === "dsp" && (
           <Card className="card-max">
             <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -925,6 +1140,19 @@ export default function Home() {
                 </>
               )}
               <div className="ml-auto flex items-center gap-1">
+                <InfoPopover title="DSP — recorder & filter lab">
+                  <p>
+                    <span className="text-foreground">recorder</span> — strip-chart of the selected channels,
+                    each on its own lane / axis (0 = now). I/Q = the post-filter{" "}
+                    <code className={CODE_CLS}>FX/FY</code> of the active mode. play/stop freezes the view for
+                    analysis (tap the coil → see the filter response).
+                  </p>
+                  <p>
+                    <span className="text-foreground">filter lab</span> — the firmware filter primitives:
+                    impulse and frequency response with the actual coefficients (Q29 / alpha / shift), per
+                    project (taktyk-dsp / MXT) and per mode.
+                  </p>
+                </InfoPopover>
                 <PngBtn name={dspMode === "live" ? "recorder" : "filter-lab"} />
                 <MaxBtn />
               </div>

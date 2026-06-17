@@ -12,6 +12,7 @@ const PEAK_FLOOR_DB = -90; // ignore peaks below this absolute level
 const PEAK_SMOOTH = 0.1; // EMA for the peak-detection spectrum (stabilises frequencies)
 const PEAK_PROM_DB = 6; // a peak must stand this far above its local surroundings
 const PEAK_WIN = 4; // bins each side used for the local floor / min separation
+const PEAK_FMIN_HZ = 2; // ignore the sub-2 Hz baseline-drift region when picking peaks
 
 export type SpectralPeak = { f: number; db: number };
 
@@ -166,8 +167,10 @@ export function IQSpectrum({
       const n = pow2Floor(ib.length);
       if (n < 32) return;
       const win = windowRef.current;
-      const ai = amplitudeSpectrum(ib.slice(ib.length - n), win);
-      const aq = amplitudeSpectrum(qb.slice(qb.length - n), win);
+      // removeDc=true: baseband I/Q carries a large standing offset; drop it so the
+      // 0 Hz bin doesn't leak through the window and mask weak near-DC target motion.
+      const ai = amplitudeSpectrum(ib.slice(ib.length - n), win, true);
+      const aq = amplitudeSpectrum(qb.slice(qb.length - n), win, true);
       const freqs = binFreqs(fs, n);
       const ref = 32768;
       const dbI = toDb(ai, ref);
@@ -214,8 +217,11 @@ export function IQSpectrum({
       }
 
       // Single-peak marker off the smoothed spectrum (stable, doesn't twitch).
-      let pi = 1;
-      for (let k = 2; k < len; k++) if (pkAvg![k] > pkAvg![pi]) pi = k;
+      // Start above the baseline-drift region so the marker tracks real peaks,
+      // not the sub-Hz wander that dominates the lowest bins after DC removal.
+      const kmin = Math.max(2, Math.ceil((PEAK_FMIN_HZ * n) / fs));
+      let pi = kmin;
+      for (let k = kmin + 1; k < len; k++) if (pkAvg![k] > pkAvg![pi]) pi = k;
       peakRef.current = { f: freqs[pi], db: pkAvg![pi] };
       // resetScales=true (default) so uPlot commits the redraw; passing false skips commit().
       u.setData([
@@ -233,7 +239,7 @@ export function IQSpectrum({
         lastPeaksAt = now;
         const pa = pkAvg!;
         const cand: { k: number; db: number }[] = [];
-        for (let k = 2; k < len - 1; k++) {
+        for (let k = kmin; k < len - 1; k++) {
           if (pa[k] < PEAK_FLOOR_DB || pa[k] <= pa[k - 1] || pa[k] < pa[k + 1]) continue;
           // local floor = lowest point within ±PEAK_WIN bins; prominence above it
           let lo = Infinity;

@@ -93,13 +93,27 @@ function getWindow(type: WindowType, n: number): { win: Float64Array; sum: numbe
 /**
  * One-sided amplitude spectrum (linear, in input units) using the given window
  * (default Hann). Returns bins 0..N/2 (length N/2 + 1).
+ *
+ * removeDc: subtract the segment mean before windowing. For baseband I/Q the
+ * standing offset is huge; left in, its 0 Hz bin leaks through the window into the
+ * lowest few bins and buries weak near-DC content (slow target motion). Default
+ * off so other callers (raw scope FFT) keep their previous behaviour.
  */
-export function amplitudeSpectrum(samples: ArrayLike<number>, window: WindowType = "hann"): Float64Array {
+export function amplitudeSpectrum(
+  samples: ArrayLike<number>,
+  window: WindowType = "hann",
+  removeDc = false,
+): Float64Array {
   const n = pow2Floor(samples.length);
   const { win, sum } = getWindow(window, n);
   const re = new Float64Array(n);
   const im = new Float64Array(n);
-  for (let i = 0; i < n; i++) re[i] = samples[i] * win[i];
+  let mean = 0;
+  if (removeDc) {
+    for (let i = 0; i < n; i++) mean += samples[i];
+    mean /= n;
+  }
+  for (let i = 0; i < n; i++) re[i] = (samples[i] - mean) * win[i];
 
   fftInPlace(re, im);
 

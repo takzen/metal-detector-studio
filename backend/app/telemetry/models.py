@@ -53,6 +53,18 @@ class RawIQBlock(BaseModel):
     q: list[int]  # quadrature samples
 
 
+class RawAdcBlock(BaseModel):
+    """Raw single-channel ADC dump for converter characterisation (noise floor /
+    spurs / ENOB FFT). Full 18-bit signed samples, ±131071 — no demod, no boxcar,
+    no truncation. Captured on-device only while full telemetry is enabled."""
+
+    type: Literal["adc_raw"] = "adc_raw"
+    seq: int
+    t: float
+    sample_rate_hz: int
+    samples: list[int]  # full 18-bit signed, ±131071
+
+
 class Hello(BaseModel):
     """Handshake sent once on connect; binds the PC to the active profile."""
 
@@ -80,4 +92,4 @@ class ConfigAck(BaseModel):
 
 
 # Anything a source may emit downstream to clients.
-TelemetryPacket = FeatureFrame | RawBlock | RawIQBlock
+TelemetryPacket = FeatureFrame | RawBlock | RawIQBlock | RawAdcBlock

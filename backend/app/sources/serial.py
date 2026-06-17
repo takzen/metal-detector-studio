@@ -28,7 +28,13 @@ from collections.abc import AsyncIterator
 import serial  # pyserial (blocking, read in a thread — robust on Windows)
 
 from ..profiles import Profile
-from ..telemetry.models import FeatureFrame, HarmonicSample, RawIQBlock, TelemetryPacket
+from ..telemetry.models import (
+    FeatureFrame,
+    HarmonicSample,
+    RawAdcBlock,
+    RawIQBlock,
+    TelemetryPacket,
+)
 from .base import TelemetrySource
 
 # firmware token -> feature extra key
@@ -47,7 +53,7 @@ _EXTRA_KEYS = {
     "FY": "fy",         # post-filter Q of the active mode -> recorder I/Q (instead of raw)
 }
 
-# queue item: ("f", feature_dict) | ("iq", (sample_rate, i_list, q_list))
+# queue item: ("f", feature_dict) | ("iq", (fs, i_list, q_list)) | ("adc", (fs, samples))
 _Item = tuple[str, object]
 
 
@@ -80,6 +86,23 @@ def _parse_raw(line: str) -> tuple[int, list[int], list[int]] | None:
     if not i_list or len(i_list) != len(q_list):
         return None
     return fs, i_list, q_list
+
+
+def _parse_adc(line: str) -> tuple[int, list[int]] | None:
+    """Parse 'AB:<fs> <n> s0 s1 ...' -> (fs, samples). Raw single-channel ADC
+    dump (full 18-bit signed) for the converter-characterisation FFT."""
+    parts = line.split()
+    if not parts or not parts[0].startswith("AB:"):
+        return None
+    try:
+        fs = int(parts[0][3:])
+        n = int(parts[1])
+        nums = [int(x) for x in parts[2 : 2 + n]]
+    except (ValueError, IndexError):
+        return None
+    if not nums or len(nums) != n:
+        return None
+    return fs, nums
 
 
 class SerialSource(TelemetrySource):
@@ -130,6 +153,13 @@ class SerialSource(TelemetrySource):
                                 self._lines_ok += 1
                             else:
                                 self._lines_bad += 1
+                        elif line.startswith("AB:"):
+                            parsed_adc = _parse_adc(line)
+                            if parsed_adc:
+                                q.append(("adc", parsed_adc))
+                                self._lines_ok += 1
+                            else:
+                                self._lines_bad += 1
                         elif line.startswith("X:"):
                             f = _parse_feature(line)
                             if "X" in f and "Y" in f:
@@ -153,6 +183,7 @@ class SerialSource(TelemetrySource):
         thread.start()
         fseq = 0
         rseq = 0
+        aseq = 0
         try:
             while True:
                 if q:
@@ -160,6 +191,13 @@ class SerialSource(TelemetrySource):
                     if kind == "f":
                         yield self._feature(fseq, payload)  # type: ignore[arg-type]
                         fseq += 1
+                    elif kind == "adc":
+                        fs, samples = payload  # type: ignore[misc]
+                        yield RawAdcBlock(
+                            seq=aseq, t=time.monotonic(),
+                            sample_rate_hz=fs, samples=samples,
+                        )
+                        aseq += 1
                     else:
                         fs, i_list, q_list = payload  # type: ignore[misc]
                         yield RawIQBlock(

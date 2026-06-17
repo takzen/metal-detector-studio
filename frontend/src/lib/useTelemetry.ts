@@ -8,6 +8,7 @@ import type {
   FeatureFrame,
   Hello,
   Profile,
+  RawAdcBlock,
   RawBlock,
   RawIQBlock,
   ServerMessage,
@@ -40,6 +41,14 @@ function emptyLink(): LinkStats {
 
 const TRAIL_MAX = 2048; // recent feature frames kept for the hodograph trail
 const IQ_MAX = 4096; // rolling 1 kHz I/Q buffer (~4 s) — scope/FFT + trigger pre/post room
+// Hardware-zero detection. The firmware's ENTER reference ref = X − DX is static between
+// presses and steps when ENTER is pressed (main.c: DX = ema − ref, ENTER sets ref = ema).
+// A re-zero is a sudden OUTLIER step in ref vs the signal's normal frame-to-frame drift,
+// so we flash only when a single step exceeds both an absolute floor and a multiple of the
+// learned drift. This stays quiet on firmware that streams a ground-tracked delta (ref
+// drifts smoothly every frame) instead of the ENTER delta.
+const DEVICE_ZERO_FLOOR = 500; // min step [LSB] to consider at all
+const DEVICE_ZERO_K = 8; // ...and it must be this many times the normal drift
 
 export interface Telemetry {
   status: ConnStatus;
@@ -59,8 +68,13 @@ export interface Telemetry {
   /** Total I/Q samples ever received — absolute index for the scope trigger. */
   iqCountRef: React.RefObject<number>;
   hasIq: boolean;
+  /** Latest raw single-channel ADC dump (SERVICE3 full telemetry) for the ENOB/FFT view. */
+  adcRef: React.RefObject<RawAdcBlock | null>;
+  hasAdc: boolean;
   stats: { featureHz: number; rawHz: number; lastAck: ConfigAck | null };
   link: LinkStats;
+  /** True for ~0.5 s after a hardware ENTER re-zero is detected on the detector. */
+  deviceZeroFlash: boolean;
   sendConfig: (key: string, value: unknown) => void;
 }
 
@@ -77,7 +91,9 @@ export function useTelemetry(): Telemetry {
   });
 
   const [hasIq, setHasIq] = useState(false);
+  const [hasAdc, setHasAdc] = useState(false);
   const [link, setLink] = useState<LinkStats>(emptyLink);
+  const [deviceZeroFlash, setDeviceZeroFlash] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const featureRef = useRef<FeatureFrame | null>(null);
@@ -87,6 +103,7 @@ export function useTelemetry(): Telemetry {
   const iqQRef = useRef<number[]>([]);
   const iqFsRef = useRef<number>(1000);
   const iqCountRef = useRef<number>(0);
+  const adcRef = useRef<RawAdcBlock | null>(null);
   // EMA-smoothed values for the (slow, readable) numeric readouts
   const featSmoothRef = useRef<{
     i: Record<string, number>;
@@ -111,6 +128,10 @@ export function useTelemetry(): Telemetry {
   const lastMsgRef = useRef(0); // perf.now() of the last telemetry frame
   const serialStatRef = useRef<SerialStats | null>(null); // latest /api/health snapshot
   const serialRateRef = useRef<{ bytesPerSec: number; badPerSec: number } | null>(null);
+  // hardware-zero detection: last seen firmware ENTER reference (ref = X - DX) + flash timer
+  const devZeroRefRef = useRef<{ x: number; y: number } | null>(null);
+  const devZeroDriftRef = useRef<number | null>(null); // learned typical per-frame |Δref|
+  const devZeroTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const sendConfig = useCallback((key: string, value: unknown) => {
     const ws = wsRef.current;
@@ -157,6 +178,8 @@ export function useTelemetry(): Telemetry {
             // a hello marks a (re)bind to a source — its seq counters restart at 0
             featSeqRef.current = -1;
             iqSeqRef.current = -1;
+            devZeroRefRef.current = null; // new source → no prior zero reference
+            devZeroDriftRef.current = null;
             setHasIq(false);
             break;
           }
@@ -179,6 +202,33 @@ export function useTelemetry(): Telemetry {
             }
             featSeqRef.current = f.seq;
             featRecvRef.current += 1;
+            // hardware-zero detection: ENTER on the detector snaps ref := ema, so the streamed
+            // delta vector (DX,DY) jumps to ~0 in a single frame. DX/DY are EMA-smoothed in the
+            // firmware → they move gently between frames, so an ENTER is a clean single-frame
+            // OUTLIER. (We deliberately do NOT reconstruct ref = X − DX: X is the RAW instantaneous
+            // sample, not the EMA, so that term is dominated by per-sample noise and never settles.)
+            // Flash only when one frame's step beats both an absolute floor AND DEVICE_ZERO_K× the
+            // learned typical step. Smoothly-moving streams stay quiet; a real ENTER trips.
+            {
+              const h0 = f.harmonics[Object.keys(f.harmonics)[0]];
+              if (h0) {
+                const prev = devZeroRefRef.current;
+                if (prev) {
+                  const d = Math.abs(h0.i - prev.x) + Math.abs(h0.q - prev.y);
+                  const drift = devZeroDriftRef.current;
+                  if (drift === null) {
+                    devZeroDriftRef.current = d; // seed on first step
+                  } else if (d > DEVICE_ZERO_FLOOR && d > DEVICE_ZERO_K * drift) {
+                    setDeviceZeroFlash(true); // outlier jump → ENTER pressed on the detector
+                    if (devZeroTimer.current) clearTimeout(devZeroTimer.current);
+                    devZeroTimer.current = setTimeout(() => setDeviceZeroFlash(false), 500);
+                  } else {
+                    devZeroDriftRef.current = drift + 0.05 * (d - drift); // slow-adapt baseline
+                  }
+                }
+                devZeroRefRef.current = { x: h0.i, y: h0.q };
+              }
+            }
             // EMA smoothing for the readable numeric readouts
             const A = 0.15;
             const sm = featSmoothRef.current ?? { i: {}, q: {}, extras: {} };
@@ -221,6 +271,12 @@ export function useTelemetry(): Telemetry {
             iqSeqRef.current = b.seq;
             iqRecvRef.current += 1;
             setHasIq(true); // no-op once already true
+            break;
+          }
+          case "adc_raw": {
+            adcRef.current = msg as RawAdcBlock;
+            lastMsgRef.current = performance.now();
+            setHasAdc(true); // no-op once already true
             break;
           }
           case "config_ack": {
@@ -398,6 +454,11 @@ export function useTelemetry(): Telemetry {
     return () => cancelAnimationFrame(af);
   }, []);
 
+  // clear the zero-flash timer on unmount
+  useEffect(() => () => {
+    if (devZeroTimer.current) clearTimeout(devZeroTimer.current);
+  }, []);
+
   return {
     status,
     profile,
@@ -412,8 +473,11 @@ export function useTelemetry(): Telemetry {
     iqFsRef,
     iqCountRef,
     hasIq,
+    adcRef,
+    hasAdc,
     stats,
     link,
+    deviceZeroFlash,
     sendConfig,
   };
 }
