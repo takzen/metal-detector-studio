@@ -290,6 +290,9 @@ export default function Home() {
   const [hodoPhase, setHodoPhase] = usePersistentState<"live" | "swing">("hodoPhase", "live");
   const h0id = profile?.harmonics[0]?.id;
   const swing = useSwingPhase(t.trailRef, h0id, h0id ? zeroBase[h0id] : undefined, hodoPhase === "swing");
+  // Factory ground-balance reference line on the hodograph (0..5°), nudged by buttons.
+  const [groundDeg, setGroundDeg] = usePersistentState("hodoGroundDeg", 0);
+  const nudgeGround = (d: number) => setGroundDeg((v) => Math.max(0, Math.min(5, Number((v + d).toFixed(1)))));
 
   const recChannels = useMemo<RecChannel[]>(
     () => [
@@ -514,6 +517,27 @@ export default function Home() {
                       </p>
                     </InfoPopover>
                   </Ctrl>
+                  <Ctrl label="ground">
+                    <span
+                      className="w-10 text-right font-mono text-xs tabular-nums"
+                      style={{ color: "#c2410c" }}
+                    >
+                      {groundDeg.toFixed(1)}°
+                    </span>
+                    {[-0.1, 0.1].map((d) => (
+                      <Seg
+                        key={d}
+                        active={false}
+                        onClick={() => nudgeGround(d)}
+                        title="move the factory ground-balance line (0–5°)"
+                      >
+                        {d > 0 ? `+${d}` : d}
+                      </Seg>
+                    ))}
+                    <Seg active={false} onClick={() => setGroundDeg(0)} title="reset ground line to 0°">
+                      0
+                    </Seg>
+                  </Ctrl>
                 </div>
               </div>
               <div className="relative aspect-square w-full">
@@ -525,6 +549,7 @@ export default function Home() {
                     offsetDeg={offsetDeg}
                     ema={ema}
                     persistence={persistence}
+                    groundDeg={groundDeg}
                   />
                 )}
                 {/* large, readable phase-angle readout (smoothed) */}

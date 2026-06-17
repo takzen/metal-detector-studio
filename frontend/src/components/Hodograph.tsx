@@ -21,6 +21,7 @@ const ABS_FLOOR = 1; // never divide by ~0
 const OFFSET_COLOR = "#22d3ee"; // colour overlay marking the demodulator phase offset
 const VDI_COLOR = "#c99a52"; // VDI sub-scale on the upper half (phase 0/90/180 -> -90/0/+90)
 const TRAIL_LEN = 300; // persistence trail length in frames (~5 s at 60 fps); older points fade out
+const GND_LINE_COLOR = "#c2410c"; // factory ground-balance reference line (dashed ray)
 
 export function Hodograph({
   trailRef,
@@ -29,6 +30,7 @@ export function Hodograph({
   offsetDeg = 0,
   ema = 0.3,
   persistence = true,
+  groundDeg = 0,
 }: {
   trailRef: React.RefObject<FeatureFrame[]>;
   harmonics: Harmonic[];
@@ -36,6 +38,7 @@ export function Hodograph({
   offsetDeg?: number;
   ema?: number; // live-vector smoothing factor (0..1): lower = smoother, higher = faster
   persistence?: boolean; // phosphor density trail of the raw I/Q samples
+  groundDeg?: number; // factory ground-balance reference line angle (0..5°)
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const peakRef = useRef(1);
@@ -50,11 +53,13 @@ export function Hodograph({
   const offsetRef = useRef(offsetDeg);
   const emaRef = useRef(ema);
   const persistRef = useRef(persistence);
+  const groundRef = useRef(groundDeg);
   useEffect(() => {
     offsetRef.current = offsetDeg;
     emaRef.current = ema;
     persistRef.current = persistence;
-  }, [offsetDeg, ema, persistence]);
+    groundRef.current = groundDeg;
+  }, [offsetDeg, ema, persistence, groundDeg]);
 
   // manual "zero" (zero the signal): snap the offset to the current sample on each bump
   useEffect(() => {
@@ -139,6 +144,27 @@ export function Hodograph({
       const by = oy;
 
       drawGrid(ctx, cx, cy, radius, peak);
+
+      // --- factory ground-balance reference line: dashed ray at groundDeg ---
+      {
+        const g = groundRef.current;
+        const gd = phaseDir(g);
+        ctx.strokeStyle = GND_LINE_COLOR;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + gd.x * radius, cy + gd.y * radius);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = GND_LINE_COLOR;
+        ctx.font = "10px var(--font-geist-mono), monospace";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`GND ${g.toFixed(1)}°`, cx + gd.x * radius * 0.5 + 6, cy + gd.y * radius * 0.5);
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
+      }
 
       const offset = offsetRef.current;
 
