@@ -15,6 +15,7 @@ import { Scope } from "@/components/Scope";
 import { SourceControls } from "@/components/SourceControls";
 import { Spectrum } from "@/components/Spectrum";
 import { AdcSpectrum } from "@/components/AdcSpectrum";
+import { useSwingPhase } from "@/lib/useSwingPhase";
 import { colorFor } from "@/lib/palette";
 import { usePersistentState } from "@/lib/usePersistentState";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
@@ -284,6 +285,12 @@ export default function Home() {
     setZeroNonce((n) => n + 1);
   }, [featureRef]);
 
+  // SwingTune: phase mode for the hodograph readout — "live" (instantaneous delta phase)
+  // or "swing" (SERVICE1-style: median phase of detected swing peaks, ±90°).
+  const [hodoPhase, setHodoPhase] = usePersistentState<"live" | "swing">("hodoPhase", "live");
+  const h0id = profile?.harmonics[0]?.id;
+  const swing = useSwingPhase(t.trailRef, h0id, h0id ? zeroBase[h0id] : undefined, hodoPhase === "swing");
+
   const recChannels = useMemo<RecChannel[]>(
     () => [
       { key: "audio", label: "audio", color: "#10b981", lane: "aud", range: [0, 4000], get: (f) => { const a = f.extras.audio; return a == null ? undefined : Math.max(0, Math.min(4000, a)); } },
@@ -481,6 +488,32 @@ export default function Home() {
                       {ema.toFixed(2)}
                     </span>
                   </Ctrl>
+                  <Ctrl label="SwingTune">
+                    <Seg active={hodoPhase === "live"} onClick={() => setHodoPhase("live")}>
+                      live
+                    </Seg>
+                    <Seg active={hodoPhase === "swing"} onClick={() => setHodoPhase("swing")}>
+                      swing
+                    </Seg>
+                    <InfoPopover title="SwingTune — phase from coil swings">
+                      <p>
+                        <b>live</b> = instantaneous delta phase (±180°): the current vector vs the
+                        studio zero, on every frame.
+                      </p>
+                      <p>
+                        <b>swing</b> = SERVICE1-style automat. It watches the delta while you swing the
+                        coil, captures each swing&apos;s <b>peak</b>, takes its phase{" "}
+                        <code className={CODE_CLS}>atan2(dy, |dx|)</code> (±90°, ferrite at 0°), and
+                        shows the <b>median</b> of the last 10 swings. Holds between swings; a new zero
+                        clears the series.
+                      </p>
+                      <p>
+                        A swing only counts if its peak <code className={CODE_CLS}>|dx|+|dy|</code>{" "}
+                        clears the target threshold — noise doesn&apos;t register.{" "}
+                        <span className="text-foreground">n</span> = swings counted.
+                      </p>
+                    </InfoPopover>
+                  </Ctrl>
                 </div>
               </div>
               <div className="relative aspect-square w-full">
@@ -496,41 +529,62 @@ export default function Home() {
                 )}
                 {/* large, readable phase-angle readout (smoothed) */}
                 <div className="pointer-events-none absolute left-3 top-2 flex flex-col gap-0.5">
-                  {profile?.harmonics.map((h, i) => {
-                    const s = feature?.harmonics[h.id];
-                    const z = zeroBase[h.id];
-                    const di = s ? s.i - (z?.i ?? 0) : null;
-                    const dq = s ? s.q - (z?.q ?? 0) : null;
-                    const deg = di != null && dq != null ? Math.atan2(dq, di) * DEG : null; // -180..+180
-                    return (
+                  {hodoPhase === "swing" ? (
+                    <>
                       <span
-                        key={h.id}
                         className="font-mono text-3xl leading-none tabular-nums"
-                        style={{ color: colorFor(i) }}
+                        style={{ color: colorFor(0) }}
                       >
-                        {deg === null ? "—" : deg.toFixed(1)}°
+                        {swing.phase === null ? "—" : swing.phase.toFixed(1)}°
                       </span>
-                    );
-                  })}
+                      <span className="font-mono text-xs text-muted">swing · n={swing.count}</span>
+                    </>
+                  ) : (
+                    profile?.harmonics.map((h, i) => {
+                      const s = feature?.harmonics[h.id];
+                      const z = zeroBase[h.id];
+                      const di = s ? s.i - (z?.i ?? 0) : null;
+                      const dq = s ? s.q - (z?.q ?? 0) : null;
+                      const deg = di != null && dq != null ? Math.atan2(dq, di) * DEG : null; // -180..+180
+                      return (
+                        <span
+                          key={h.id}
+                          className="font-mono text-3xl leading-none tabular-nums"
+                          style={{ color: colorFor(i) }}
+                        >
+                          {deg === null ? "—" : deg.toFixed(1)}°
+                        </span>
+                      );
+                    })
+                  )}
                 </div>
                 {/* large VDI readout (mirror of the phase readout, top-right) */}
                 <div className="pointer-events-none absolute right-3 top-2 flex flex-col items-end gap-0.5">
-                  {profile?.harmonics.map((h) => {
-                    const s = feature?.harmonics[h.id];
-                    const z = zeroBase[h.id];
-                    const di = s ? s.i - (z?.i ?? 0) : null;
-                    const dq = s ? s.q - (z?.q ?? 0) : null;
-                    const vdi = di != null && dq != null ? wrap180(Math.atan2(dq, di) * DEG - 90) : null;
-                    return (
-                      <span
-                        key={h.id}
-                        className="font-mono text-3xl leading-none tabular-nums"
-                        style={{ color: VDI_COLOR }}
-                      >
-                        {vdi === null ? "—" : vdi.toFixed(1)}
-                      </span>
-                    );
-                  })}
+                  {hodoPhase === "swing" ? (
+                    <span
+                      className="font-mono text-3xl leading-none tabular-nums"
+                      style={{ color: VDI_COLOR }}
+                    >
+                      {swing.phase === null ? "—" : wrap180(swing.phase - 90).toFixed(1)}
+                    </span>
+                  ) : (
+                    profile?.harmonics.map((h) => {
+                      const s = feature?.harmonics[h.id];
+                      const z = zeroBase[h.id];
+                      const di = s ? s.i - (z?.i ?? 0) : null;
+                      const dq = s ? s.q - (z?.q ?? 0) : null;
+                      const vdi = di != null && dq != null ? wrap180(Math.atan2(dq, di) * DEG - 90) : null;
+                      return (
+                        <span
+                          key={h.id}
+                          className="font-mono text-3xl leading-none tabular-nums"
+                          style={{ color: VDI_COLOR }}
+                        >
+                          {vdi === null ? "—" : vdi.toFixed(1)}
+                        </span>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </Card>
