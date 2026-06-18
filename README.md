@@ -260,3 +260,7 @@ MCP-capable assistant (example for Claude Code's `.mcp.json`):
 ```
 
 Override the target backend with `METAL_LAB_WS` (default `ws://127.0.0.1:8000/ws/telemetry`).
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
