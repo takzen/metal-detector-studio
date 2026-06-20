@@ -3,13 +3,13 @@
 A real-time signal diagnostics, analysis, and visualization suite for custom metal
 detector development (VLF / Pulse Induction). It connects to the detector's
 microcontroller over **USB-CDC / USART**, streams per-harmonic I/Q telemetry and raw
-ADC blocks, and renders them as a vector hodograph, virtual oscilloscope, live FFT, and
-a DSP analyzer for ground-balance and discrimination tuning.
+ADC blocks, and renders them as a vector **XY hodograph**, an **I/Q phase / axis
+auto-calibration** sandbox, a **virtual oscilloscope**, a **live FFT**, an **ADC scope**
+(converter noise / SNR / ENOB), and a **DSP analyzer** (signal-chain recorder + filter lab)
+for ground-balance and discrimination tuning.
 
 It is a **universal bench lab**: the detector under test is described by a JSON
 **device profile**, so the same studio drives different firmwares without code changes.
-
-![Metal Detector Studio — live dashboard with XY hodograph and per-harmonic I/Q readout](assets/mds_1.webp)
 
 ## Target devices (profiles)
 
@@ -58,6 +58,15 @@ flowchart TD
   swing and reports the **median phase** of the last swings (±90°, drift-cancelled), the
   repeatable reading for tuning. A settable **factory ground-balance reference line** (0–5°)
   can be overlaid on the dial.
+- **I/Q phase / axis calibration (PhaseLab):** a sandbox for I/Q axis auto-calibration — the
+  physical channels are the true vector rotated by an unknown axis angle θ (it drifts with
+  frequency/temperature). A **manual** mode (θ / φ / amplitude sliders) proves the math; a
+  **live** mode feeds the real probe I/Q (EMA-smoothed). An **air-balance** captures θ from the
+  no-metal rest vector (`atan2`) and the inverse 2×2 rotation `R(−θ)` brings the corrected plane
+  to zero — phase is then read relative to the balance point. Dual hodograph (physical vs
+  corrected) with the same signed degree protractor as the main dial (0° at left) and a large
+  corrected-phase overlay. (On analog-demod detectors θ≈0; the real value is for digital
+  demodulation / Spectral-G4.)
 - **Virtual Oscilloscope:** real-time time-domain plot with timebase (50 ms–2 s),
   auto/manual vertical scale, and run/hold. A **sweep trigger** (auto / normal / single-shot,
   source I / Q / |IQ|, rising or falling edge, auto-placed or draggable level line) holds a
@@ -68,7 +77,9 @@ flowchart TD
   picking clean working bands — selectable frequency span, **selectable window** (rect / Hann /
   Hamming / Blackman / flat-top, with live RBW), adjustable dB floor, **EMA averaging**,
   **max-hold**, 50 Hz mains reference lines, and a **waterfall / spectrogram** view (line,
-  waterfall, or both) with a peak marker.
+  waterfall, or both) with a peak marker. A **complex two-sided mode** (I/Q vs ±f) runs the FFT
+  on `I + jQ`, keeping the side of the carrier (a tone above zero-beat shows at +f, below at −f)
+  and exposing quadrature imbalance as a mirror image.
 - **ADC scope (converter characterization):** FFT of the raw single-channel ADC dump
   (full 18-bit, no demod / boxcar / truncation) with live **noise metrics** — SNR, ENOB,
   RMS in LSB/µV, noise floor, FFT processing gain, **narrow-band SNR** (per the analysis
@@ -82,9 +93,13 @@ flowchart TD
   filters) on separate axes — to watch the detection chain over time. Smooth wall-clock
   scrolling plus a **play/stop** freeze for static inspection; tap the coil for an impulse to
   see the filter response. Plus a **filter lab** that previews the *actual* firmware filters
-  (DEEP/PIN/PROS 2-pole LP, DISC biquad with real Q29 coeffs, baseline/motion/ground EMA
-  trackers, DEEP/PROS SAT tables) — impulse + frequency response, live coefficients, metrics
-  (−3/−6 dB, settling time, overshoot) and a hover cursor readout.
+  across three projects — **taktyk-dsp** (DEEP/PIN/PROS 2-pole EMA LP, DISC biquad + band-pass,
+  DISC-IDX Classic-III cascade, baseline/ground trackers, SAT tables), the **MXT** reference, and
+  a **sandbox** of experimental Q15 biquad cascades (`filters_sandbox`). It shows a **triangle
+  test pulse → filter response → frequency response** triad with **x/y zoom** sliders, a **stage
+  toggle** for cascades (each biquad alone or the full chain), **absolute-dB** magnitude (so
+  filters with gain show their real level), and an exact analytic transfer-function response for
+  biquad cascades. Live coefficients and metrics (−3 dB band, settling time, overshoot) included.
 - **Dynamic, profile-driven mapping:** a device-agnostic JSON contract
   (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
   firmware without PC rewrites. Profile and serial port are switchable live from the
@@ -99,20 +114,55 @@ flowchart TD
 
 ## Screenshots
 
+All shots run the **Spectral-G4** profile — multi-frequency VLF with three simultaneous
+harmonics (7.8125 / 23.4375 / 39.0625 kHz).
+
 ### XY hodograph — I/Q vector & phase
-![XY hodograph: live I/Q vector on a signed ±180° protractor with the VDI sub-scale and phase readout](assets/1.webp)
+![XY hodograph: per-harmonic I/Q vector on a signed protractor with VDI sub-scale and ground line](assets/new_9_beta/hodograph.webp)
+
+The per-harmonic I/Q vector on a signed ±180° protractor (0° at left) with a VDI sub-scale,
+large phase / VDI readouts, a factory ground-balance line, persistence trail and **SwingTune**.
+Side cards show **raw vs. studio-delta** per harmonic plus inter-harmonic phase diffs.
+
+### I/Q phase — axis auto-calibration (PhaseLab)
+![I/Q phase: physical vs corrected dual hodograph for I/Q axis auto-calibration](assets/new_9_beta/iq_phase.webp)
+
+Dual hodograph — **physical** (rotated by the unknown axis angle θ) next to **corrected**
+(after `R(−θ)`). Air-balance measures θ from the no-metal probe vector; the large overlay reads
+the corrected phase. (On analog-demod detectors θ≈0; the real value is digital demod / Spectral-G4.)
 
 ### Oscilloscope — demodulated I/Q over time
-![Virtual oscilloscope: demodulated I/Q waveform with sweep trigger and per-channel measurements](assets/2.webp)
+![Virtual oscilloscope: demodulated I/Q waveform with sweep trigger and per-channel measurements](assets/new_9_beta/oscilloscope.webp)
+
+Time-domain I/Q with a **sweep trigger** (auto / normal / single, source I / Q / |IQ|, draggable
+level) and a fixed **measurements** panel (Vpp, RMS, mean, frequency per channel).
 
 ### Live FFT — spectrum & waterfall
-![Live FFT: dBFS spectrum with waterfall / spectrogram for EMI scouting](assets/3.webp)
+![Live FFT: dBFS spectrum with waterfall / spectrogram for EMI scouting](assets/new_9_beta/fft_live.webp)
+
+dBFS spectrum with **line + waterfall / spectrogram** views, selectable window, averaging,
+max-hold and 50 Hz mains markers — plus a **complex two-sided (±f)** mode that keeps the I/Q
+carrier side.
+
+### ADC scope — converter noise / SNR / ENOB
+![ADC scope: FFT of the raw 18-bit ADC dump with live noise / SNR / ENOB metrics](assets/new_9_beta/adc_scope.webp)
+
+FFT of the raw 18-bit single-channel ADC dump with live **noise metrics** (SNR, ENOB, RMS in
+LSB / µV, noise floor, FFT gain, narrow-band SNR, strongest spur) — separates converter noise
+from the analog front end.
 
 ### DSP recorder — the detection chain over time
-![DSP recorder: multi-channel strip-chart of audio, threshold, ground and post-filter I/Q](assets/4.webp)
+![DSP recorder: multi-channel strip-chart of audio, threshold, ground and post-filter I/Q](assets/new_9_beta/recorder.webp)
+
+Multi-channel strip-chart, each signal on its own lane: **audio + threshold**, **ground**, and
+**I/Q after the active mode's filters**; play/stop freeze for coil-tap analysis.
 
 ### Filter lab — real firmware filters
-![Filter lab: impulse and frequency response of the actual firmware DSP filters, with metrics](assets/5.webp)
+![Filter lab: triangle pulse, filter response and frequency response of the actual firmware DSP filters](assets/new_9_beta/filter_lab.webp)
+
+Previews the **actual firmware DSP filters** (plus a sandbox of biquad cascades): a **triangle
+test pulse → filter response → frequency response**, with a per-stage toggle, x/y zoom and
+absolute-dB magnitude.
 
 ## Status
 
@@ -122,7 +172,7 @@ Talks to real detector hardware over USB-CDC; each device is described by a JSON
 | --- | --- |
 | Telemetry contract (`schema.json` + profiles) | ✅ |
 | Backend: FastAPI + WebSocket + serial (USB-CDC) source | ✅ |
-| Frontend: dashboard (hodograph · oscilloscope · FFT · DSP) | ✅ |
+| Frontend: dashboard (hodograph · I/Q phase · oscilloscope · FFT · ADC scope · DSP) | ✅ |
 | Live profile/port switching from the UI | ✅ |
 | MCP server (telemetry as AI tools) | ✅ |
 | Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
@@ -157,9 +207,9 @@ Roadmap and task breakdown live in `TASKS.md`.
 └── frontend/              # Next.js app
     └── src/
         ├── app/           # tabbed dashboard page + layout
-        ├── components/    # Hodograph, IQScope/IQSpectrum (demod I/Q), Scope/Spectrum
-        │                  #   (raw RX), Recorder + FilterLab (DSP/SAT), ControlPanel,
-        │                  #   SourceControls
+        ├── components/    # Hodograph, PhaseLab (I/Q axis calib), IQScope/IQSpectrum +
+        │                  #   IQWaterfall (demod I/Q), Scope/Spectrum (raw RX), AdcSpectrum
+        │                  #   (ADC scope), Recorder + FilterLab (DSP/SAT), ControlPanel
         └── lib/           # telemetry types, WebSocket hook, FFT, palette, REST client
 ```
 

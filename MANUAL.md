@@ -116,7 +116,31 @@ Beside the hodograph:
 - **Extras** — extra fields from the source (TAKTYK: `vdi`, `ground`, `audio`,
   `threshold`, `kgnd`, `mode`, `px`, `py`).
 
-### 2. Oscilloscope — virtual scope
+### 2. I/Q phase — axis calibration (PhaseLab)
+
+A sandbox for **I/Q axis auto-calibration**: the physical channels (X'/Y') are the true
+vector rotated by an unknown axis angle **θ** (it drifts with frequency / temperature). Two
+plots side by side — **physical** (raw, rotated) and **corrected** (after `R(−θ)`) — both on
+the same signed degree protractor as the hodograph (0° at left).
+
+- **source** — `manual` or `live`.
+  - **manual** — sliders **θ axis rot** / **target φ** / **amplitude** synthesise the probe
+    vector (proves the math, no hardware). `measure θ (air-balance)` / `reset cal` set or clear
+    the calibration; readouts: θ actual / measured / axis error / true φ / detector reads.
+  - **live** — the left plot is the **real probe I/Q** (feature f1), smoothed by the **ema**
+    slider (like the hodograph). **air-balance (zero)** captures θ from the current no-metal
+    vector (`atan2`), `R(−θ)` brings the corrected plot to 0; `reset cal` clears it. A large
+    top-right overlay shows **corrected φ** plus raw φ / θ / I / Q.
+- **How it works** — with no metal the probe sits on the true X axis, so the rest vector reads
+  at θ; measuring it and rotating it out makes the corrected phase read relative to that zero
+  (exactly ground balance). Whatever the probe's offset, air-balancing cancels it; leftover
+  drift shows as `axis error`.
+
+> ⚠️ On **analog-demod** detectors (TAKTYK) the I/Q is already balanced (θ≈0), so this is mainly
+> a viewer. The real value is for **digital demodulation** (Spectral-G4), where θ is unknown and
+> frequency-dependent.
+
+### 3. Oscilloscope — virtual scope
 
 Time-domain waveform (x = ms). What you see depends on the source:
 
@@ -150,7 +174,7 @@ separately for I and Q, over the visible window.
 > signal (I/Q demod drift/noise) tune the level (drag the line) or use `single` with
 > `src |IQ|`.
 
-### 3. Live FFT — spectrum analyzer (EMI scouting)
+### 4. Live FFT — spectrum analyzer (EMI scouting)
 
 Spectrum of **|X| in dBFS vs frequency [Hz]**, with a peak marker (dashed line + Hz/dB
 readout).
@@ -163,6 +187,9 @@ readout).
 Controls (for the I/Q source):
 - **view** — `line` (line plot), `fall` (**waterfall / spectrogram**: time vertical,
   newest on top, color = dBFS, magma map), `both` (both, shared span).
+- **mode** — `I/Q` (separate real spectra of I and Q) or `±f` (**complex two-sided** FFT of
+  `I + jQ`: keeps the side of the carrier — a tone above zero-beat at +f, below at −f — and
+  exposes quadrature imbalance as a mirror image; 0 Hz = zero-beat, in the middle).
 - **span** — frequency range: `50 / 100 / 200 Hz` or `full` (to Nyquist).
 - **win** — **FFT window**: `rect / hann / hamm / black / flat`. Resolution vs leakage
   trade-off (rect = narrowest bin but high leakage; flat = best amplitude accuracy).
@@ -177,7 +204,7 @@ Controls (for the I/Q source):
   - **peaks** — *experimental, unstable* — strongest-bins list; frequencies drift,
     not very useful. Off by default.
 
-### 4. ADC scope — raw converter (noise / SNR / ENOB)
+### 5. ADC scope — raw converter (noise / SNR / ENOB)
 
 FFT of the **raw single-channel ADC dump** — full 18-bit, before demodulation, the boxcar
 average or any truncation — for characterizing the converter and the analog front end.
@@ -198,7 +225,7 @@ datasheet figure; with the live front end connected you measure the whole chain.
 frequency axis is nominal (~22 kSPS, ±5 %); the ENOB / RMS figures are sample-rate
 independent.
 
-### 5. DSP — signal-chain recorder + filter analysis
+### 6. DSP — signal-chain recorder + filter analysis
 
 Two modes (switch at the top):
 
@@ -209,17 +236,20 @@ Two modes (switch at the top):
   (post-ground-correction signal); `I`, `Q`. Lane scale: `auto` / `lock` / `+`/`−`
   (zoom); audio+threshold use a **fixed `0..4000` scale**. Window: `0.5 … 10 s`. *Tap
   the coil* to inject an impulse and watch the filters respond.
-- **filter analysis** (theory) — preview the **real firmware filters** (taktyk-dsp, the
-  ~1 kHz chain). A **project switcher** (taktyk-dsp / MXT reference) selects the filter
-  set; presets are the **actually-instantiated** filters: `DEEP/PIN/PROS LP` (2-pole EMA,
-  shift 5), `DISC LP` (biquad, real Q29), `DISC baseline` (shift 10), `DISC motion-HP`
-  (shift 7), `ground track` (shift 9), `PIN average` (shift 8), `DEEP SAT` (`SAT_ALPHA`),
-  `PROS VSAT` (`PROS_SAT_ALPHA`), plus a `DISC motion band` composite. Shows the
-  **impulse response** `h[n]` and **frequency response** [dB] (DFT), live **coefficients**
-  (Q29 / alpha / shift) and **metrics**: shape-aware `−3 dB` (low-pass / high-pass /
-  band-pass edges), settling time (±2%) and overshoot. A **response: low-pass / high-pass**
-  toggle shows EMA trackers as their actual high-pass complement. You can also tweak
-  type / shift / SAT level / window / Fs by hand. Theory mode — no source data needed.
+- **filter analysis** (theory) — preview the **real firmware filters** across three projects
+  via a **project switcher**: **taktyk-dsp** (the ~1 kHz chain), the **MXT** reference, and a
+  **sandbox** of experimental Q15 biquad cascades (`filters_sandbox`). Presets are the
+  actually-instantiated filters: `DEEP/PIN/PROS LP` (2-pole EMA, shift 5), `DISC LP`
+  (biquad, real Q29, ~10 Hz), `DISC band-pass` (EMA pair, shift 4/9), `DISC motion band`
+  (composite), `DISC-IDX` (Classic-III biquad cascade), `DISC baseline` (shift 11),
+  `ground track` (shift 9), `PIN average` (shift 8), `DEEP SAT` / `PROS VSAT` tables.
+  Three charts: a **triangle test pulse → filter response `y[n]` → frequency response** in
+  **absolute dB** (filters with gain show their real level). Controls: **type / shift / SAT /
+  Fs**, a **stage** toggle for cascades (each biquad alone, or the full chain), **x-zoom**
+  (time + frequency) and **y-zoom / y-span** sliders, and a **response: low-pass / high-pass**
+  toggle for EMA trackers. Shows live **coefficients** and **metrics** (shape-aware `−3 dB`,
+  settling time ±2%, overshoot); biquad cascades use an exact analytic transfer-function
+  response. Theory mode — no source data needed.
 
 ## Keyboard shortcuts
 
