@@ -24,6 +24,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
+import httpx
 import numpy as np
 from mcp.server.fastmcp import Context, FastMCP
 from websockets.asyncio.client import connect
@@ -31,6 +32,27 @@ from websockets.asyncio.client import connect
 from app import config
 
 WS_URL = os.environ.get("METAL_LAB_WS", f"ws://{config.HOST}:{config.PORT}/ws/telemetry")
+HTTP_BASE = os.environ.get("METAL_LAB_HTTP", f"http://{config.HOST}:{config.PORT}")
+
+
+async def _http(method: str, path: str, json: dict | None = None) -> dict:
+    """Call a backend REST endpoint; return parsed JSON or an {"error": ...} dict."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.request(method, f"{HTTP_BASE}{path}", json=json)
+    except httpx.HTTPError as exc:
+        return {"error": f"backend unreachable: {exc}"}
+    if r.status_code >= 400:
+        detail = r.text
+        try:
+            detail = r.json().get("detail", detail)
+        except Exception:
+            pass
+        return {"error": f"HTTP {r.status_code}: {detail}"}
+    try:
+        return r.json()
+    except Exception:
+        return {"ok": True}
 
 
 def _wrap_deg(d: float) -> float:
@@ -289,6 +311,63 @@ async def set_config(ctx: Context, key: str, value) -> dict:
     if c.profile and key not in c.profile.get("config_keys", []):
         return {"ok": False, "detail": f"key not in profile config_keys: {c.profile.get('config_keys')}"}
     return await c.send_config(key, value)
+
+
+# --- recording / replay control (backend REST) ------------------------------
+
+
+@mcp.tool()
+async def list_recordings() -> dict:
+    """List saved telemetry session recordings (name, size, mtime)."""
+    return await _http("GET", "/api/recordings")
+
+
+@mcp.tool()
+async def recording_status() -> dict:
+    """Whether a recording is in progress, plus its frame/byte counts and elapsed time."""
+    return await _http("GET", "/api/record")
+
+
+@mcp.tool()
+async def start_recording() -> dict:
+    """Start recording the live telemetry stream to a new NDJSON file."""
+    return await _http("POST", "/api/record", {"action": "start"})
+
+
+@mcp.tool()
+async def stop_recording() -> dict:
+    """Stop the current recording; returns the file name and final counts."""
+    return await _http("POST", "/api/record", {"action": "stop"})
+
+
+@mcp.tool()
+async def replay(file: str, speed: float = 1.0, loop: bool = False) -> dict:
+    """Switch the telemetry source to replay a recording (by file name). After this,
+    every read tool (get_latest_feature, get_spectrum, ...) reflects the replayed data.
+    Use go_live() to return to the hardware."""
+    return await _http(
+        "POST", "/api/source",
+        {"source": "replay", "file": file, "speed": speed, "loop": loop},
+    )
+
+
+@mcp.tool()
+async def go_live() -> dict:
+    """Switch the telemetry source back to the live serial device (reuses the backend's
+    current profile + port)."""
+    health = await _http("GET", "/api/health")
+    if "error" in health:
+        return health
+    profile, port = health.get("profile"), health.get("port")
+    if not port:
+        return {"error": "backend has no serial port configured"}
+    return await _http("POST", "/api/source", {"source": "serial", "profile": profile, "port": port})
+
+
+@mcp.tool()
+async def delete_recording(name: str) -> dict:
+    """Delete a saved recording by file name (cannot delete the one being replayed)."""
+    return await _http("DELETE", f"/api/recordings/{name}")
 
 
 if __name__ == "__main__":

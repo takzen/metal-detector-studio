@@ -33,6 +33,8 @@ export function RecordingControls() {
   const [live, setLive] = useState<{ profile: string; port: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // name of the recording pending delete-confirmation (null = no dialog)
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -84,13 +86,14 @@ export function RecordingControls() {
   };
 
   const remove = async () => {
-    if (!file) return;
-    if (!window.confirm(`Delete recording ${file}?`)) return;
+    const target = pendingDelete;
+    if (!target) return;
+    setPendingDelete(null);
     setBusy(true);
     setError(null);
     try {
-      await deleteRecording(file);
-      setFile("");
+      await deleteRecording(target);
+      setFile((f) => (f === target ? "" : f));
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed");
@@ -190,7 +193,7 @@ export function RecordingControls() {
 
       {/* delete the selected recording */}
       <button
-        onClick={remove}
+        onClick={() => file && setPendingDelete(file)}
         disabled={busy || !file || replaying}
         title="delete the selected recording"
         className="w-9 rounded-md border border-border py-1.5 text-sm text-muted transition-colors hover:border-red-500 hover:text-red-400 disabled:opacity-40"
@@ -207,6 +210,77 @@ export function RecordingControls() {
       </span>
 
       {error && <span className="py-1.5 text-xs text-red-400">{error}</span>}
+
+      {pendingDelete && (
+        <ConfirmDelete
+          name={pendingDelete}
+          size={recordings.find((r) => r.name === pendingDelete)?.bytes}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={remove}
+        />
+      )}
+    </div>
+  );
+}
+
+function ConfirmDelete({
+  name,
+  size,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  size?: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  // close on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+      if (e.key === "Enter") onConfirm();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, onConfirm]);
+
+  const label = name.replace(/^rec-|\.ndjson$/g, "");
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onCancel}
+    >
+      <div
+        className="w-[22rem] rounded-lg border border-border bg-background p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
+        <h2 className="mb-1 flex items-center gap-2 text-base font-semibold text-foreground">
+          <span className="text-red-400">🗑</span> Delete recording
+        </h2>
+        <p className="mb-1 text-sm text-muted">This permanently removes the file from disk.</p>
+        <p className="mb-4 font-mono text-sm text-foreground">
+          {label}
+          {size != null && <span className="text-muted"> · {fmtBytes(size)}</span>}
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-accent/10"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            autoFocus
+            className="rounded-md border border-red-500 bg-red-500/10 px-3 py-1.5 text-sm text-red-400 transition-colors hover:bg-red-500/20"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

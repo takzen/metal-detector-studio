@@ -2,7 +2,7 @@
   "mcpServers": {
     "metal-detector-studio": {
       "command": "uv",
-      "args": ["run", "python", "mcp_server.py"],
+      "args": ["run", "--directory", "backend", "python", "mcp_server.py"],
       "cwd": "backend"
     }
   }
