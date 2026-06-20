@@ -100,17 +100,28 @@ flowchart TD
   toggle** for cascades (each biquad alone or the full chain), **absolute-dB** magnitude (so
   filters with gain show their real level), and an exact analytic transfer-function response for
   biquad cascades. Live coefficients and metrics (−3 dB band, settling time, overshoot) included.
+- **Session record & replay:** record the entire telemetry stream to an NDJSON file and
+  play it back from the header bar (selectable file, speed 0.5–4×, loop). Replay runs through
+  the same backend hub, so **every tab and the MCP server see it exactly like live** — for
+  offline analysis, DSP regression and hardware-free demos. Recordings can be deleted (with an
+  in-app confirm) and exported to **CSV**.
+- **Data export:** every chart card has **PNG** (canvas snapshot) and, for FFT and the DSP
+  recorder, **CSV** — the FFT spectrum (freq + I/Q dB, or the two-sided ±f magnitude) and the
+  recorder's active channels over time. Recordings export to CSV from the backend (and via MCP).
 - **Dynamic, profile-driven mapping:** a device-agnostic JSON contract
   (`backend/schema.json` + `backend/profiles/*.json`) adapts the studio to different
   firmware without PC rewrites. Profile and serial port are switchable live from the
-  header (no backend restart).
+  header (no backend restart). Every broadcast frame is **validated against `schema.json`**
+  (translated to JSON-Schema); pass/fail counters surface in the header **link-quality** panel
+  next to the serial parse-error counts.
 - **Consistent, persistent UI:** controls are grouped into clearly-labelled clusters
   (parameter label vs. clickable choice), and UI settings (active tab, scope timebase,
   trigger, FFT span/window/dB/avg/view, recorder window/channels, hodograph offset/EMA)
   persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`6` tabs, `Enter`/`Z`
-  zero, `Space` run/hold), per-chart fullscreen (`⛶`) and PNG export.
+  zero, `Space` run/hold), per-chart fullscreen (`⛶`) and PNG / CSV export.
 - **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
-  coding assistants (read frames, analyze phase/spectrum, push config).
+  coding assistants (read frames, analyze phase/spectrum, push config) and **controls
+  recording / replay** (start/stop, list, replay, go-live, delete, export CSV).
 
 ## Screenshots
 
@@ -174,7 +185,10 @@ Talks to real detector hardware over USB-CDC; each device is described by a JSON
 | Backend: FastAPI + WebSocket + serial (USB-CDC) source | ✅ |
 | Frontend: dashboard (hodograph · I/Q phase · oscilloscope · FFT · ADC scope · DSP) | ✅ |
 | Live profile/port switching from the UI | ✅ |
-| MCP server (telemetry as AI tools) | ✅ |
+| Session record + replay (file, all tabs + MCP) | ✅ |
+| Data export (PNG · CSV · recording→CSV) | ✅ |
+| Frame validation vs `schema.json` (jsonschema) | ✅ |
+| MCP server (telemetry as AI tools + recording control) | ✅ |
 | Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
 | Config back to MCU over serial | 🚧 needs firmware command input |
 
@@ -293,6 +307,10 @@ backend as a WebSocket client and exposes live telemetry as tools for AI assista
 - `analyze_phase` — rank target archetypes by phase-diff distance (discrimination)
 - `get_spectrum` — FFT peaks of the latest raw block (Hann window, dBFS)
 - `set_config` — push config to the source (gain, mode, noise, target, …)
+- `list_recordings` / `recording_status` — saved sessions; current recorder state
+- `start_recording` / `stop_recording` — record the live stream to a file
+- `replay(file, speed, loop)` / `go_live` — switch the source to a recording, or back to serial
+- `delete_recording` / `export_recording_csv` — remove a recording; export it to CSV
 
 Start the backend (`uv run python main.py`), then register the server with your
 MCP-capable assistant (example for Claude Code's `.mcp.json`):
@@ -302,12 +320,14 @@ MCP-capable assistant (example for Claude Code's `.mcp.json`):
   "mcpServers": {
     "metal-detector-studio": {
       "command": "uv",
-      "args": ["run", "python", "mcp_server.py"],
-      "cwd": "backend"
+      "args": ["run", "--directory", "backend", "python", "mcp_server.py"]
     }
   }
 }
 ```
+
+> The `--directory backend` flag is what makes `uv` resolve the backend's environment;
+> a relative `"cwd"` is not reliably honoured by all MCP launchers.
 
 Override the target backend with `METAL_LAB_WS` (default `ws://127.0.0.1:8000/ws/telemetry`).
 

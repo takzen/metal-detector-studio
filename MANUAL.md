@@ -45,6 +45,24 @@ METAL_LAB_PROFILE=urd1 METAL_LAB_SERIAL_PORT=COM5 uv run python main.py
 
 To add your own detector, see [`backend/profiles/README.md`](backend/profiles/README.md).
 
+## Recording & replay
+
+Next to the profile/port bar in the header (fixed layout, values don't reflow):
+
+- **rec / stop** — start/stop recording the **whole telemetry stream** to a file
+  (`backend/recordings/rec-YYYYMMDD-HHMMSS.ndjson`). While recording, a readout shows
+  elapsed seconds + frame count.
+- **replay** — pick a saved recording; **speed** `0.5 / 1 / 2 / 4×`; **loop**.
+- **play / stop** — start replay of the selected file, or stop and return to the live
+  serial source. Replay flows through the same backend hub, so **every tab and the MCP
+  server see it exactly like live** — for offline analysis and hardware-free demos.
+- **🗑 delete** — remove the selected recording (in-app confirm dialog; can't delete the
+  one currently replaying).
+- The right-hand indicator shows the active source: `● live` or `▶ replay`.
+
+Recordings can also be controlled by an AI agent over MCP (start/stop/list/replay/
+go-live/delete/export-CSV), and exported to CSV (see "PNG / CSV export").
+
 ## Header
 
 Fixed positions (they don't jump as values change):
@@ -55,9 +73,14 @@ Fixed positions (they don't jump as values change):
 - **feature** — measured feature-frame rate [Hz].
 - **raw** — raw I/Q or ADC block rate [Hz] (0 if the source sends none).
 - **seq** — last frame counter (increasing = stream alive).
+- **link** — toggles a **link-quality** panel: WS throughput, frame drops (from `seq`
+  gaps), inter-arrival jitter, measured-vs-declared rates, frame age, serial-wire bytes/s
+  and **parse errors**, plus **schema errors** (frames failing validation against
+  `schema.json`). An amber dot on the button flags drops / parse / schema errors / a stalled
+  stream.
 
-The version number sits next to the title; tabs and the profile/port bar are below the
-metrics.
+The version number sits next to the title; tabs, the profile/port bar and the recording
+controls are below the metrics.
 
 ## Controls & settings
 
@@ -264,10 +287,18 @@ Two modes (switch at the top):
 The **⛶** button (top-right of the oscilloscope / FFT / DSP card) expands the chart to
 fullscreen (native browser fullscreen). **Esc** exits. The chart resizes itself.
 
-## PNG export
+## PNG / CSV export
 
-The **PNG** button on a card (hodograph / oscilloscope / FFT / DSP) saves the current
-chart as a PNG (canvas snapshot). The file is named with the current date/time.
+- **PNG** — on a card (hodograph / oscilloscope / FFT / DSP) saves the current chart as a
+  PNG (canvas snapshot).
+- **CSV** — on **FFT** and the **DSP recorder**: saves the underlying data. FFT → the
+  displayed spectrum (`freq_hz` + `I_db,Q_db`, or `db` in the ±f mode); recorder → the
+  active channels over time (`t_s, seq, …`). Computed from the live buffers at click time.
+- **Recordings → CSV** — a saved session is exported to CSV from the backend
+  (`GET /api/recordings/<name>/csv`, or the MCP `export_recording_csv` tool): the `feature`
+  time-series flattened to per-harmonic `i/q/mag/phase` + extras.
+
+Files are named with the current date/time.
 
 ## Hardware integration (stream from your own detector)
 
