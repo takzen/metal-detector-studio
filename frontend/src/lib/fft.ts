@@ -126,6 +126,58 @@ export function amplitudeSpectrum(
   return out;
 }
 
+/**
+ * Two-sided amplitude spectrum of the COMPLEX baseband signal s = I + jQ, fftshifted
+ * so the output runs from −Fs/2 .. +Fs/2 (length N). Unlike running I and Q as two
+ * real spectra (each symmetric, sign lost), this keeps the side of the carrier: a
+ * tone above zero-beat lands at +f, below at −f, and quadrature imbalance shows as a
+ * mirror image. Amplitude = |X|/Σwin (one bin per complex tone, no ×2).
+ */
+export function complexAmplitudeSpectrum(
+  iSamples: ArrayLike<number>,
+  qSamples: ArrayLike<number>,
+  window: WindowType = "hann",
+  removeDc = false,
+): Float64Array {
+  const n = pow2Floor(Math.min(iSamples.length, qSamples.length));
+  const { win, sum } = getWindow(window, n);
+  const re = new Float64Array(n);
+  const im = new Float64Array(n);
+  let mr = 0;
+  let mi = 0;
+  if (removeDc) {
+    for (let i = 0; i < n; i++) {
+      mr += iSamples[i];
+      mi += qSamples[i];
+    }
+    mr /= n;
+    mi /= n;
+  }
+  for (let i = 0; i < n; i++) {
+    re[i] = (iSamples[i] - mr) * win[i];
+    im[i] = (qSamples[i] - mi) * win[i];
+  }
+
+  fftInPlace(re, im);
+
+  const out = new Float64Array(n);
+  const scale = 1 / sum;
+  const half = n >> 1;
+  for (let i = 0; i < n; i++) {
+    const k = (i + half) % n; // fftshift: −Fs/2 first, DC at i=N/2
+    out[i] = Math.hypot(re[k], im[k]) * scale;
+  }
+  return out;
+}
+
+/** Two-sided bin frequencies in Hz (−Fs/2 .. +Fs/2) for complexAmplitudeSpectrum. */
+export function binFreqsTwoSided(sampleRateHz: number, n: number): Float64Array {
+  const out = new Float64Array(n);
+  const half = n >> 1;
+  for (let i = 0; i < n; i++) out[i] = ((i - half) * sampleRateHz) / n;
+  return out;
+}
+
 /** Bin center frequencies in Hz for amplitudeSpectrum output. */
 export function binFreqs(sampleRateHz: number, processedN: number): Float64Array {
   const half = processedN >> 1;

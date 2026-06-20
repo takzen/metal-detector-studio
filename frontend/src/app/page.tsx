@@ -258,6 +258,7 @@ export default function Home() {
   const [fftPeaks, setFftPeaks] = useState<SpectralPeak[]>([]); // transient: live top-N peaks
   const [fftWindow, setFftWindow] = usePersistentState<WindowType>("fftWindow", "hann"); // FFT window
   const [fftDbFloor, setFftDbFloor] = usePersistentState("fftDbFloor", -100); // bottom of dB scale
+  const [fftComplex, setFftComplex] = usePersistentState("fftComplex", false); // two-sided FFT of I+jQ (±f)
   const [recMs, setRecMs] = usePersistentState("recMs", 2000); // DSP recorder window
   const [recActiveArr, setRecActiveArr] = usePersistentState<string[]>("recActive", ["audio", "threshold"]);
   const recActive = useMemo(() => new Set(recActiveArr), [recActiveArr]);
@@ -1015,6 +1016,22 @@ export default function Home() {
                   </Ctrl>
                   {fftView !== "waterfall" && (
                     <>
+                      <Ctrl label="mode">
+                        <Seg
+                          active={!fftComplex}
+                          onClick={() => setFftComplex(false)}
+                          title="separate real spectra of I and Q (each symmetric)"
+                        >
+                          I/Q
+                        </Seg>
+                        <Seg
+                          active={fftComplex}
+                          onClick={() => setFftComplex(true)}
+                          title="two-sided FFT of I+jQ: keeps the side of the carrier (±f) and reveals quadrature imbalance"
+                        >
+                          ±f
+                        </Seg>
+                      </Ctrl>
                       <Ctrl label="avg">
                         {[1, 4, 8, 16].map((n) => (
                           <Seg
@@ -1059,7 +1076,7 @@ export default function Home() {
               <>
                 {(fftView === "line" || fftView === "both") && (
                   <div className={`chart-fill relative w-full ${fftView === "both" ? "h-[15rem]" : "h-[28rem]"}`}>
-                    <IQSpectrum iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} spanHz={fftSpan} maxHold={fftMaxHold} avgN={fftAvg} mainsHz={fftMains ? 50 : 0} windowType={fftWindow} dbFloor={fftDbFloor} onPeaks={fftPeaksOn ? setFftPeaks : undefined} />
+                    <IQSpectrum iRef={t.iqIRef} qRef={t.iqQRef} fsRef={t.iqFsRef} spanHz={fftSpan} maxHold={fftMaxHold} avgN={fftAvg} mainsHz={fftMains ? 50 : 0} windowType={fftWindow} dbFloor={fftDbFloor} complex={fftComplex} onPeaks={fftPeaksOn ? setFftPeaks : undefined} />
                     {fftPeaksOn && <PeaksTable peaks={fftPeaks} />}
                   </div>
                 )}
@@ -1089,14 +1106,20 @@ export default function Home() {
                 <span>x: frequency [Hz] · y: time (newest on top) · colour: |X| [dBFS] {fftDbFloor}…0 · {fftWindow}</span>
               ) : (
                 <>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#3b82f6" }} />I</span>
-                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#f59e0b" }} />Q</span>
+                  {fftComplex ? (
+                    <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#3b82f6" }} />I+jQ</span>
+                  ) : (
+                    <>
+                      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#3b82f6" }} />I</span>
+                      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#f59e0b" }} />Q</span>
+                    </>
+                  )}
                   {fftMaxHold && (
                     <span className="inline-flex items-center gap-1"><span className="h-0.5 w-3" style={{ background: "#cbd5e1" }} />max-hold</span>
                   )}
                   {fftAvg > 1 && <span>avg ×{fftAvg}</span>}
                   {fftRbw > 0 && <span>RBW {fftRbw < 10 ? fftRbw.toFixed(2) : fftRbw.toFixed(1)} Hz</span>}
-                  <span>x: frequency [Hz] · y: |X| [dBFS] · {fftWindow} · green dash = peak</span>
+                  <span>x: frequency [Hz]{fftComplex ? " (±f, 0 = zero-beat)" : ""} · y: |X| [dBFS] · {fftWindow} · green dash = peak</span>
                 </>
               )}
             </div>

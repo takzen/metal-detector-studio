@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import uPlot from "uplot";
-import { amplitudeSpectrum, binFreqs, pow2Floor, type WindowType } from "@/lib/fft";
+import { amplitudeSpectrum, binFreqs, binFreqsTwoSided, complexAmplitudeSpectrum, pow2Floor, type WindowType } from "@/lib/fft";
 
 const DB_FLOOR = -100;
 // NOTE: the peak-table feature below is unstable / of dubious value (frequencies
@@ -26,6 +26,7 @@ export function IQSpectrum({
   mainsHz = 0,
   windowType = "hann",
   dbFloor = DB_FLOOR,
+  complex = false,
   onPeaks,
 }: {
   iRef: React.RefObject<number[]>;
@@ -37,6 +38,7 @@ export function IQSpectrum({
   mainsHz?: number; // mains fundamental for reference lines (0 = off, e.g. 50)
   windowType?: WindowType; // FFT window (resolution vs spectral leakage)
   dbFloor?: number; // bottom of the dB scale (visible dynamic range)
+  complex?: boolean; // two-sided FFT of I+jQ (±f) instead of separate I/Q real spectra
   onPeaks?: (peaks: SpectralPeak[]) => void; // throttled top-N peaks (unstable — see note)
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -47,6 +49,7 @@ export function IQSpectrum({
   const mainsRef = useRef(mainsHz);
   const windowRef = useRef(windowType);
   const dbFloorRef = useRef(dbFloor);
+  const complexRef = useRef(complex);
   const onPeaksRef = useRef(onPeaks);
   useEffect(() => {
     spanRef.current = spanHz;
@@ -55,6 +58,7 @@ export function IQSpectrum({
     mainsRef.current = mainsHz;
     windowRef.current = windowType;
     dbFloorRef.current = dbFloor;
+    complexRef.current = complex;
     onPeaksRef.current = onPeaks;
   });
 
@@ -74,7 +78,10 @@ export function IQSpectrum({
       width: Math.max(1, Math.round(r0.width)),
       height: Math.max(1, Math.round(r0.height)),
       scales: {
-        x: { time: false, range: () => [0, spanRef.current === "full" ? (fsRef.current || 1000) / 2 : spanRef.current] },
+        x: { time: false, range: () => {
+          const fmax = spanRef.current === "full" ? (fsRef.current || 1000) / 2 : (spanRef.current as number);
+          return complexRef.current ? [-fmax, fmax] : [0, fmax];
+        } },
         y: { range: () => [dbFloorRef.current, 0] },
       },
       axes: [
@@ -95,11 +102,12 @@ export function IQSpectrum({
           (up) => {
             // Mains reference grid: harmonics of the fundamental (hum in baseband I/Q).
             const mains = mainsRef.current;
+            const cx = complexRef.current;
+            const top = up.valToPos(0, "y", true);
+            const bot = up.valToPos(dbFloorRef.current, "y", true);
+            const fMax = spanRef.current === "full" ? (fsRef.current || 1000) / 2 : (spanRef.current as number);
             if (mains > 0) {
               const ctx = up.ctx;
-              const top = up.valToPos(0, "y", true);
-              const bot = up.valToPos(dbFloorRef.current, "y", true);
-              const fMax = spanRef.current === "full" ? (fsRef.current || 1000) / 2 : (spanRef.current as number);
               ctx.save();
               ctx.strokeStyle = "rgba(239,68,68,0.28)";
               ctx.fillStyle = "rgba(239,68,68,0.7)";
@@ -112,7 +120,25 @@ export function IQSpectrum({
                 ctx.lineTo(x, bot);
                 ctx.stroke();
                 if (k === 1) ctx.fillText(`${mains}Hz`, x + 3, bot - 4);
+                if (cx) { // mirror harmonic on the negative side for the two-sided view
+                  const xn = up.valToPos(-k * mains, "x", true);
+                  ctx.beginPath();
+                  ctx.moveTo(xn, top);
+                  ctx.lineTo(xn, bot);
+                  ctx.stroke();
+                }
               }
+              ctx.restore();
+            }
+            if (cx) { // zero-beat (DC) reference line
+              const ctx = up.ctx;
+              const x0 = up.valToPos(0, "x", true);
+              ctx.save();
+              ctx.strokeStyle = "rgba(139,152,169,0.35)";
+              ctx.beginPath();
+              ctx.moveTo(x0, top);
+              ctx.lineTo(x0, bot);
+              ctx.stroke();
               ctx.restore();
             }
 
@@ -120,8 +146,6 @@ export function IQSpectrum({
             if (!pk) return;
             const ctx = up.ctx;
             const x = up.valToPos(pk.f, "x", true);
-            const top = up.valToPos(0, "y", true);
-            const bot = up.valToPos(dbFloorRef.current, "y", true);
             ctx.save();
             ctx.strokeStyle = "#10b981";
             ctx.setLineDash([4, 3]);
@@ -150,6 +174,11 @@ export function IQSpectrum({
     let pkAvg: Float64Array | null = null; // time-smoothed spectrum used only for peak finding
     let prevMaxHold = false;
     let lastPeaksAt = 0;
+    // Complex (two-sided) mode carries its own buffers — length N, vs N/2+1 for real I/Q.
+    let emaC: Float64Array | null = null;
+    let mhC: Float64Array | null = null;
+    let nanFull: Float64Array | null = null;
+    let prevHoldC = false;
 
     const ro = new ResizeObserver(() => {
       const r = host.getBoundingClientRect();
@@ -167,6 +196,53 @@ export function IQSpectrum({
       const n = pow2Floor(ib.length);
       if (n < 32) return;
       const win = windowRef.current;
+
+      // Two-sided complex view: one |FFT(I+jQ)| trace over ±f (sign of carrier kept).
+      if (complexRef.current) {
+        const amp = complexAmplitudeSpectrum(ib.slice(ib.length - n), qb.slice(qb.length - n), win, true);
+        const freqs = binFreqsTwoSided(fs, n);
+        const db = toDb(amp, 32768);
+        const len = db.length;
+        if (!emaC || emaC.length !== len) {
+          emaC = Float64Array.from(db);
+          mhC = new Float64Array(len).fill(-Infinity);
+          nanFull = new Float64Array(len).fill(NaN);
+        }
+        const avgN = Math.max(1, avgNRef.current | 0);
+        let disp: Float64Array = db;
+        if (avgN > 1) {
+          const a = 1 / avgN;
+          for (let k = 0; k < len; k++) emaC[k] += (db[k] - emaC[k]) * a;
+          disp = emaC;
+        } else {
+          emaC.set(db);
+        }
+        const holding = maxHoldRef.current;
+        if (holding && !prevHoldC) mhC!.fill(-Infinity);
+        prevHoldC = holding;
+        let mhRow = nanFull!;
+        if (holding) {
+          for (let k = 0; k < len; k++) if (disp[k] > mhC![k]) mhC![k] = disp[k];
+          mhRow = mhC!;
+        }
+        // Single peak over the two-sided spectrum, excluding the zero-beat band.
+        const half = len >> 1;
+        const kmin = Math.max(1, Math.ceil((PEAK_FMIN_HZ * n) / fs));
+        let pi = -1;
+        for (let k = 0; k < len; k++) {
+          if (Math.abs(k - half) < kmin) continue;
+          if (pi < 0 || disp[k] > disp[pi]) pi = k;
+        }
+        peakRef.current = pi >= 0 ? { f: freqs[pi], db: disp[pi] } : null;
+        u.setData([
+          freqs as unknown as number[],
+          disp as unknown as number[],
+          nanFull as unknown as number[],
+          mhRow as unknown as number[],
+        ]);
+        return;
+      }
+
       // removeDc=true: baseband I/Q carries a large standing offset; drop it so the
       // 0 Hz bin doesn't leak through the window and mask weak near-DC target motion.
       const ai = amplitudeSpectrum(ib.slice(ib.length - n), win, true);
