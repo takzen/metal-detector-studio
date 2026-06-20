@@ -14,6 +14,7 @@ BACKEND_DIR: Path = Path(__file__).resolve().parent.parent
 
 SCHEMA_PATH: Path = BACKEND_DIR / "schema.json"
 PROFILES_DIR: Path = BACKEND_DIR / "profiles"
+RECORDINGS_DIR: Path = BACKEND_DIR / "recordings"
 
 # Which device profile to stream. Override with METAL_LAB_PROFILE=spectral_g4, etc.
 # Default = urd1 (TAKTYK, the real connected device); spectral_g4 has no live source yet.

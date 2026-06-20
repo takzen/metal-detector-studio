@@ -56,6 +56,10 @@ pnpm-debug.log*
 TASKS.md
 CLAUDE.md
 docs/
+.claude/
+
+# Recorded telemetry sessions
+backend/recordings/
 
 # Frontend app code: the directory named "lib" is source, NOT the Python "lib/"
 # build dir above — re-include it so it is tracked.

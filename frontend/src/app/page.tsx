@@ -13,6 +13,7 @@ import { LinkPanel } from "@/components/LinkPanel";
 import { Recorder, type RecChannel } from "@/components/Recorder";
 import { Scope } from "@/components/Scope";
 import { SourceControls } from "@/components/SourceControls";
+import { RecordingControls } from "@/components/RecordingControls";
 import { Spectrum } from "@/components/Spectrum";
 import { AdcSpectrum } from "@/components/AdcSpectrum";
 import { useSwingPhase } from "@/lib/useSwingPhase";
@@ -393,7 +394,10 @@ export default function Home() {
               );
             })}
           </nav>
-          <SourceControls />
+          <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+            <SourceControls />
+            <RecordingControls />
+          </div>
         </div>
         {showLink && <LinkPanel link={link} profile={profile} status={t.status} />}
       </header>

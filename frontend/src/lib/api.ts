@@ -25,11 +25,24 @@ export interface PortInfo {
   description: string;
 }
 
-export interface SourceRequest {
-  source: "serial";
-  profile: string;
-  port?: string | null;
-  baud?: number;
+export type SourceRequest =
+  | { source: "serial"; profile: string; port?: string | null; baud?: number }
+  | { source: "replay"; file: string; profile?: string | null; speed?: number; loop?: boolean };
+
+/** A telemetry session recording on disk. */
+export interface Recording {
+  name: string;
+  bytes: number;
+  mtime: number;
+}
+
+/** Live recorder state from the backend. */
+export interface RecordStatus {
+  recording: boolean;
+  path?: string;
+  frames?: number;
+  bytes?: number;
+  elapsed_s?: number;
 }
 
 async function getJson<T>(path: string): Promise<T> {
@@ -42,11 +55,32 @@ export const getHealth = () => getJson<Health>("/api/health");
 export const getProfiles = () => getJson<{ active: string; available: string[] }>("/api/profiles");
 export const getPorts = () => getJson<{ ports: PortInfo[] }>("/api/ports");
 
-export async function setSource(body: SourceRequest): Promise<void> {
-  const res = await fetch(`${HTTP_BASE}/api/source`, {
+async function postJson(path: string, body: unknown): Promise<void> {
+  const res = await fetch(`${HTTP_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      const j = await res.json();
+      detail = j.detail ?? detail;
+    } catch {}
+    throw new Error(detail);
+  }
+}
+
+export const setSource = (body: SourceRequest) => postJson("/api/source", body);
+
+export const getRecordings = () => getJson<{ recordings: Recording[] }>("/api/recordings");
+export const getRecordStatus = () => getJson<RecordStatus>("/api/record");
+export const startRecord = () => postJson("/api/record", { action: "start" });
+export const stopRecord = () => postJson("/api/record", { action: "stop" });
+
+export async function deleteRecording(name: string): Promise<void> {
+  const res = await fetch(`${HTTP_BASE}/api/recordings/${encodeURIComponent(name)}`, {
+    method: "DELETE",
   });
   if (!res.ok) {
     let detail = `${res.status}`;
