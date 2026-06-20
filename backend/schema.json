@@ -69,6 +69,17 @@
         "q": { "type": "array<int16>" }
       }
     },
+    "adc_raw": {
+      "direction": "device->pc",
+      "description": "Raw single-channel ADC dump for converter characterisation (noise floor / spurs / ENOB FFT). Full 18-bit signed samples, no demod/boxcar/truncation; on-device only while full telemetry is enabled.",
+      "fields": {
+        "type": { "type": "string", "const": "adc_raw" },
+        "seq": { "type": "uint32" },
+        "t": { "type": "float", "unit": "s" },
+        "sample_rate_hz": { "type": "uint32", "unit": "Hz" },
+        "samples": { "type": "array<int32>", "description": "full 18-bit signed, +-131071" }
+      }
+    },
     "config": {
       "direction": "pc->device",
       "description": "Configuration command back to the device (and to the synthetic source). Allowed keys come from the active profile.",

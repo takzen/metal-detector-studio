@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import csv
+import io
+import json
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -20,9 +23,11 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ValidationError
 
 from .. import config
+from ..frame_validation import FrameValidator
 from ..profiles import list_profiles, load_profile, load_schema
 from ..recording import Recorder
 from ..sources.base import TelemetrySource
@@ -69,10 +74,62 @@ def _make_source(
     raise ValueError(f"unsupported source {source_kind!r}")
 
 
+def _recording_feature_csv(path) -> tuple[str, int]:
+    """Flatten a recording's `feature` frames into CSV text. Columns: seq, t, then
+    per-harmonic i/q/mag/phase, then the union of all extras keys (sorted). Returns
+    (csv_text, row_count). Non-feature frames (raw/raw_iq/meta) are skipped — the
+    time-series of the discrimination vector is what's useful offline."""
+    feats: list[dict] = []
+    hids: list[str] = []
+    extra_keys: set[str] = set()
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if obj.get("type") != "feature":
+                continue
+            feats.append(obj)
+            for hid in obj.get("harmonics", {}):
+                if hid not in hids:
+                    hids.append(hid)
+            extra_keys.update(obj.get("extras", {}).keys())
+
+    extra_cols = sorted(extra_keys)
+    header = ["seq", "t"]
+    for hid in hids:
+        header += [f"{hid}_i", f"{hid}_q", f"{hid}_mag", f"{hid}_phase"]
+    header += extra_cols
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(header)
+    for f in feats:
+        row: list = [f.get("seq"), f.get("t")]
+        harmonics = f.get("harmonics", {})
+        for hid in hids:
+            s = harmonics.get(hid)
+            if s:
+                row += [s.get("i"), s.get("q"), s.get("mag"), s.get("phase")]
+            else:
+                row += ["", "", "", ""]
+        ex = f.get("extras", {})
+        row += [ex.get(k, "") for k in extra_cols]
+        w.writerow(row)
+    return buf.getvalue(), len(feats)
+
+
 async def _pump(app: FastAPI, source: TelemetrySource) -> None:
     """Drain the given source and broadcast every frame as NDJSON-ready text."""
     try:
         async for packet in source.stream():
+            validator: FrameValidator | None = getattr(app.state, "frame_validator", None)
+            if validator is not None:
+                validator.check(packet.model_dump())
             _emit(app, packet.model_dump_json())
     except asyncio.CancelledError:
         raise
@@ -123,6 +180,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.hub = Hub()
     app.state.switch_lock = asyncio.Lock()
     app.state.recorder = None
+    app.state.frame_validator = FrameValidator(load_schema())
     await _start_source(
         app,
         source_kind=config.SOURCE,
@@ -161,6 +219,7 @@ def create_app() -> FastAPI:
             "baud": app.state.baud,
             "clients": app.state.hub.client_count,
             "serial": app.state.source.link_stats(),
+            "frames": app.state.frame_validator.stats(),
         }
 
     @app.get("/api/schema")
@@ -274,6 +333,28 @@ def create_app() -> FastAPI:
         path.unlink()
         log.info("recording deleted -> %s", name)
         return {"ok": True, "deleted": name}
+
+    @app.get("/api/recordings/{name}/csv")
+    async def recording_csv(name: str, save: bool = False):
+        """Export a recording's feature time-series as CSV. Default: download the CSV
+        body. ?save=1: write a sibling `.csv` on the backend and return JSON metadata
+        (used by the MCP `export_recording_csv` tool)."""
+        if "/" in name or "\\" in name or not name.endswith(".ndjson"):
+            raise HTTPException(400, "invalid recording name")
+        path = config.RECORDINGS_DIR / name
+        if not path.exists():
+            raise HTTPException(404, f"recording not found: {name!r}")
+        text, rows = _recording_feature_csv(path)
+        if save:
+            out = path.with_suffix(".csv")
+            out.write_text(text, encoding="utf-8")
+            log.info("recording exported -> %s (%d rows)", out.name, rows)
+            return {"ok": True, "file": out.name, "rows": rows, "bytes": out.stat().st_size}
+        return PlainTextResponse(
+            text,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{path.stem}.csv"'},
+        )
 
     @app.websocket("/ws/telemetry")
     async def ws_telemetry(websocket: WebSocket) -> None:

@@ -6,7 +6,15 @@ import { Hodograph } from "@/components/Hodograph";
 import { PhaseLab } from "@/components/PhaseLab";
 import { IQScope, type TrigMode, type TrigSrc } from "@/components/IQScope";
 import { IQSpectrum, type SpectralPeak } from "@/components/IQSpectrum";
-import { pow2Floor, type WindowType } from "@/lib/fft";
+import {
+  amplitudeSpectrum,
+  binFreqs,
+  binFreqsTwoSided,
+  complexAmplitudeSpectrum,
+  pow2Floor,
+  type WindowType,
+} from "@/lib/fft";
+import { downloadCsv } from "@/lib/csv";
 import { InfoPopover, CODE_CLS } from "@/components/InfoPopover";
 import { IQWaterfall } from "@/components/IQWaterfall";
 import { LinkPanel } from "@/components/LinkPanel";
@@ -171,6 +179,25 @@ function PngBtn({ name }: { name: string }) {
   );
 }
 
+/**
+ * Saves chart data as CSV. `build` returns the rows (header + data) at click time,
+ * or null when there's nothing to export (empty buffer / no channels).
+ */
+function CsvBtn({ name, build }: { name: string; build: () => (string | number)[][] | null }) {
+  return (
+    <button
+      onClick={() => {
+        const rows = build();
+        if (rows && rows.length > 1) downloadCsv(name, rows);
+      }}
+      title="save data as CSV"
+      className="rounded border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:text-foreground"
+    >
+      CSV
+    </button>
+  );
+}
+
 /** A segmented choice / toggle button (active = accent-highlighted). */
 function Seg({
   active,
@@ -235,6 +262,7 @@ export default function Home() {
   const linkWarn =
     link.feature.drops > 0 ||
     (link.serial?.badTotal ?? 0) > 0 ||
+    (link.schema?.bad ?? 0) > 0 ||
     (t.status === "open" && linkSawData && link.ageMs > 1500);
   // Persisted UI prefs (localStorage) — survive reload. Transient run-state
   // (run/hold, pause, nonces) stays plain useState so it always starts fresh.
@@ -316,6 +344,48 @@ export default function Home() {
   const fftN = pow2Floor(t.iqIRef.current?.length ?? 0);
   const fftFs = t.iqFsRef.current || 0;
   const fftRbw = fftN > 0 && fftFs > 0 ? (ENBW[fftWindow] * fftFs) / fftN : 0;
+
+  // CSV builders (called at click time so they snapshot the current buffer/settings).
+  // FFT: recompute the displayed spectrum from the I/Q buffer (mirrors IQSpectrum:
+  // dBFS ref 32768, DC removed). Recorder: the trail's active channels over time.
+  const buildFftCsv = (): (string | number)[][] | null => {
+    const ib = t.iqIRef.current;
+    const qb = t.iqQRef.current;
+    const fs = t.iqFsRef.current || 1000;
+    const n = pow2Floor(ib.length);
+    if (n < 32) return null;
+    const toDb = (a: number) => (20 * Math.log10(a / 32768 + 1e-9)).toFixed(2);
+    if (fftComplex) {
+      const amp = complexAmplitudeSpectrum(ib.slice(ib.length - n), qb.slice(qb.length - n), fftWindow, true);
+      const freqs = binFreqsTwoSided(fs, n);
+      const rows: (string | number)[][] = [["freq_hz", "db"]];
+      for (let k = 0; k < amp.length; k++) rows.push([freqs[k].toFixed(3), toDb(amp[k])]);
+      return rows;
+    }
+    const ai = amplitudeSpectrum(ib.slice(ib.length - n), fftWindow, true);
+    const aq = amplitudeSpectrum(qb.slice(qb.length - n), fftWindow, true);
+    const freqs = binFreqs(fs, n);
+    const rows: (string | number)[][] = [["freq_hz", "I_db", "Q_db"]];
+    for (let k = 0; k < ai.length; k++) rows.push([freqs[k].toFixed(3), toDb(ai[k]), toDb(aq[k])]);
+    return rows;
+  };
+  const buildRecCsv = (): (string | number)[][] | null => {
+    const trail = t.trailRef.current;
+    if (!trail.length) return null;
+    const cols = recChannels.filter((c) => recActive.has(c.key));
+    if (!cols.length) return null;
+    const t0 = trail[0].t;
+    const rows: (string | number)[][] = [["t_s", "seq", ...cols.map((c) => c.label)]];
+    for (const f of trail) {
+      const row: (string | number)[] = [(f.t - t0).toFixed(4), f.seq];
+      for (const c of cols) {
+        const v = c.get(f);
+        row.push(v == null ? "" : v);
+      }
+      rows.push(row);
+    }
+    return rows;
+  };
 
   // Keyboard shortcuts (ignored while typing in a control):
   //  1..N — switch tabs · Enter/Z — zero the hodograph · Space — run/hold (scope) or play/stop (DSP)
@@ -968,6 +1038,7 @@ export default function Home() {
                       <span className="text-foreground">avg</span> help catch or smooth interferers.
                     </p>
                   </InfoPopover>
+                  {t.hasIq && <CsvBtn name="fft-spectrum" build={buildFftCsv} />}
                   <PngBtn name="fft" />
                   <MaxBtn />
                 </div>
@@ -1249,6 +1320,7 @@ export default function Home() {
                     project (taktyk-dsp / MXT) and per mode.
                   </p>
                 </InfoPopover>
+                {dspMode === "live" && <CsvBtn name="recorder" build={buildRecCsv} />}
                 <PngBtn name={dspMode === "live" ? "recorder" : "filter-lab"} />
                 <MaxBtn />
               </div>

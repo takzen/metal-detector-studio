@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getHealth, type SerialStats } from "./api";
+import { getHealth, type FrameStats, type SerialStats } from "./api";
 import { WS_URL } from "./config";
 import type {
   ConfigAck,
@@ -27,6 +27,8 @@ export interface LinkStats {
   iq: { samplesPerSec: number; fsDeclared: number; drops: number; dropPct: number };
   /** Serial-wire counters (null when the active source has no physical link). */
   serial: { connected: boolean; bytesPerSec: number; badPerSec: number; badTotal: number } | null;
+  /** Schema-validation counters (frames checked against schema.json on the backend). */
+  schema: { ok: number; bad: number; lastError: string } | null;
 }
 
 function emptyLink(): LinkStats {
@@ -36,6 +38,7 @@ function emptyLink(): LinkStats {
     feature: { hz: 0, recv: 0, drops: 0, dropPct: 0, jitterMs: 0 },
     iq: { samplesPerSec: 0, fsDeclared: 0, drops: 0, dropPct: 0 },
     serial: null,
+    schema: null,
   };
 }
 
@@ -117,6 +120,7 @@ export function useTelemetry(): Telemetry {
   const lastMsgRef = useRef(0); // perf.now() of the last telemetry frame
   const serialStatRef = useRef<SerialStats | null>(null); // latest /api/health snapshot
   const serialRateRef = useRef<{ bytesPerSec: number; badPerSec: number } | null>(null);
+  const frameStatRef = useRef<FrameStats | null>(null); // schema-validation counters
   // hardware-zero detection: last seen firmware ENTER reference (ref = X - DX) + flash timer
 
   const sendConfig = useCallback((key: string, value: unknown) => {
@@ -272,6 +276,7 @@ export function useTelemetry(): Telemetry {
         const h = await getHealth();
         if (!alive) return;
         serialStatRef.current = h.serial;
+        frameStatRef.current = h.frames ?? null;
         if (h.serial) {
           const now = performance.now();
           if (prev) {
@@ -292,6 +297,7 @@ export function useTelemetry(): Telemetry {
         if (!alive) return;
         serialStatRef.current = null;
         serialRateRef.current = null;
+        frameStatRef.current = null;
         prev = null;
       }
     };
@@ -401,6 +407,13 @@ export function useTelemetry(): Telemetry {
                 bytesPerSec: sr?.bytesPerSec ?? 0,
                 badPerSec: sr?.badPerSec ?? 0,
                 badTotal: ss.lines_bad,
+              }
+            : null,
+          schema: frameStatRef.current
+            ? {
+                ok: frameStatRef.current.frames_ok,
+                bad: frameStatRef.current.frames_bad,
+                lastError: frameStatRef.current.last_error,
               }
             : null,
         });

@@ -76,6 +76,15 @@ export function LinkPanel({ link, profile, status }: { link: LinkStats; profile:
       ) : (
         <Cell label="serial" value="—" sub="backend offline" />
       )}
+
+      {link.schema && (
+        <Cell
+          label="schema errors"
+          value={String(link.schema.bad)}
+          sub={link.schema.bad > 0 ? (link.schema.lastError || "invalid frame") : `${link.schema.ok} ok`}
+          warn={link.schema.bad > 0}
+        />
+      )}
     </div>
   );
 }

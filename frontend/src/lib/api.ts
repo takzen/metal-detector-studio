@@ -10,6 +10,14 @@ export interface SerialStats {
   lines_bad: number;
 }
 
+/** Cumulative schema-validation counters (frames checked against schema.json). */
+export interface FrameStats {
+  frames_ok: number;
+  frames_bad: number;
+  skipped: number;
+  last_error: string;
+}
+
 export interface Health {
   status: string;
   source: string;
@@ -18,6 +26,7 @@ export interface Health {
   baud: number;
   clients: number;
   serial: SerialStats | null;
+  frames?: FrameStats;
 }
 
 export interface PortInfo {

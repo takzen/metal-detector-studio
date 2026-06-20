@@ -370,5 +370,12 @@ async def delete_recording(name: str) -> dict:
     return await _http("DELETE", f"/api/recordings/{name}")
 
 
+@mcp.tool()
+async def export_recording_csv(name: str) -> dict:
+    """Export a recording's feature time-series to a sibling CSV file on the backend
+    (per-harmonic I/Q/mag/phase + extras). Returns the CSV file name and row count."""
+    return await _http("GET", f"/api/recordings/{name}/csv?save=1")
+
+
 if __name__ == "__main__":
     mcp.run()
