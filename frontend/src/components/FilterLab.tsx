@@ -10,13 +10,39 @@ import uPlot from "uplot";
 //   - 2-pole LP:           two cascaded EMA (DEEP/PIN/PROS lp -> lp2)
 //   - band-pass pair:      s1=EMA(x); bp=2*(s1-s2_prev); s2=EMA(s1)  (filters.h bp_pair)
 //   - DISC LP:             2nd-order biquad, Q29 coeffs            (biquad.h, mode_dynamic)
+//   - DISC-IDX band:       2-stage Q15 biquad, Classic III clone  (biquad_idx, mode_dynamic_idx)
 // Impulse response is simulated, the frequency response evaluated by DFT.
 
 const M = 512; // impulse-response length (samples)
 const Q29 = 2 ** 29;
+const Q15 = 2 ** 15;
 
-// Real DISC low-pass biquad coefficients (Q29) from mode_dynamic.c BP_LPF[].
-const DISC_BIQUAD = { b0: 977174, b1: 1954348, b2: 977174, a1: -1007033236, a2: 474071020 };
+// Real DISC low-pass biquad coefficients (Q29) from mode_dynamic.c BP_LPF[]
+// (Butterworth 2nd-order, lowered 14 Hz → 10 Hz).
+const DISC_BIQUAD = { b0: 507178, b1: 1014355, b2: 507178, a1: -1026066113, a2: 491223911 };
+
+// One Q15 biquad stage (Direct Form I): y = b0·x + b1·x1 + b2·x2 − a1·y1 − a2·y2.
+type BiqStage = { b0: number; b1: number; b2: number; a1: number; a2: number };
+
+// DISC-IDX test-channel filter (biquad_idx.c): 2-stage Q15 biquad cascade — a
+// digital clone of White's Classic III analog motion filter. Peak 7.2 Hz, +42.7 dB.
+const IDX_S1: BiqStage = { b0: 25992, b1: -15656, b2: -10320, a1: -62623, a2: 29920 };
+const IDX_S2: BiqStage = { b0: -15150, b1: 0, b2: 15150, a1: -62629, a2: 29926 };
+
+// filters_sandbox/*.c — hand-designed Q15 biquad cascades (preview only; the .ipynb
+// notebooks are where they are actually synthesised). Transcribed 1:1 from the C.
+const SBX_CLASSIC3_2: BiqStage[] = [IDX_S1, IDX_S2]; // biquad_1_2stage.c (= DIDX)
+const SBX_CLASSIC3_3: BiqStage[] = [IDX_S1, IDX_S2, IDX_S2]; // biquad_1_3stage.c (3rd = 2nd)
+const SBX_NEILA_7HZ_G60: BiqStage[] = [ // biquad_3_neila_7hz_gain60.c — +60 dB @ 7 Hz
+  { b0: 4086, b1: 0, b2: -4086, a1: -64665, a2: 31955 },
+  { b0: 4759, b1: 0, b2: -4759, a1: -64928, a2: 32257 },
+  { b0: 3767, b1: 0, b2: -3767, a1: -65195, a2: 32462 },
+];
+const SBX_NEILA_7HZ_0DB: BiqStage[] = [ // biquad_3_nelia_7hz.c — ~0 dB net @ 7 Hz
+  { b0: 409, b1: 0, b2: -409, a1: -64665, a2: 31955 },
+  { b0: 476, b1: 0, b2: -476, a1: -64928, a2: 32257 },
+  { b0: 377, b1: 0, b2: -377, a1: -65195, a2: 32462 },
+];
 
 // Real SAT alpha tables (Q15), levels 1..20.
 const PROS_SAT_ALPHA = [
@@ -26,7 +52,7 @@ const DEEP_SAT_ALPHA = [
   3, 4, 5, 7, 9, 12, 15, 20, 26, 34, 45, 59, 77, 101, 133, 174, 228, 298, 391, 512,
 ]; // mode_static.c (DEEP SAT high-pass tracker)
 
-type Kind = "ema" | "lp2" | "bp" | "biquad" | "sat" | "box" | "discband";
+type Kind = "ema" | "lp2" | "bp" | "biquad" | "biqN" | "sat" | "box" | "discband";
 
 function emaImpulse(a: number): number[] {
   const h = new Array<number>(M);
@@ -80,6 +106,27 @@ function biquadImpulse(b0: number, b1: number, b2: number, a1: number, a2: numbe
   return h;
 }
 
+// Generic cascade of N Q15 biquad stages (biquad_idx.c / filters_sandbox). Coeffs
+// are raw Q15 ints, normalised by 2^15. Direct-Form-I, same convention as
+// biquadImpulse. Feeding [oneStage] gives that stage alone; the full list = cascade.
+function biqNImpulse(stages: BiqStage[]): number[] {
+  const cs = stages.map((s) => ({
+    b0: s.b0 / Q15, b1: s.b1 / Q15, b2: s.b2 / Q15, a1: s.a1 / Q15, a2: s.a2 / Q15,
+    x1: 0, x2: 0, y1: 0, y2: 0,
+  }));
+  const h = new Array<number>(M);
+  for (let n = 0; n < M; n++) {
+    let v = n === 0 ? 1 : 0;
+    for (const c of cs) {
+      const y = c.b0 * v + c.b1 * c.x1 + c.b2 * c.x2 - c.a1 * c.y1 - c.a2 * c.y2;
+      c.x2 = c.x1; c.x1 = v; c.y2 = c.y1; c.y1 = y;
+      v = y;
+    }
+    h[n] = v;
+  }
+  return h;
+}
+
 // N-tap moving average (boxcar FIR), DC gain 1. Used to represent the MXT SAT
 // envelope window: the real tracker takes max-over-N (non-LTI, no |H(f)|), so the
 // boxcar conveys the window length / smoothing as a genuine, plottable filter.
@@ -89,25 +136,61 @@ function boxImpulse(n: number): number[] {
   return h;
 }
 
-// Effective DISC "motion band": biquad LPF 14 Hz cascaded with the motion
-// high-pass (1 − EMA shift7) DISC applies on the amplitude envelope. LINEAR
-// approximation — the real DISC path rectifies (|.|) between the two stages, so
-// this shows the passband shape, not the exact non-linear envelope response.
+// Effective DISC "motion band": input biquad LPF 10 Hz cascaded with the MXT
+// band-pass pair 2·(EMA shift4 − EMA shift9) DISC runs on the ground-combined
+// signal (mode_dynamic.c DYN_BP_SHIFT1/2). LINEAR approximation — the real DISC
+// path half-wave rectifies the band-pass output (one hump per target), so this
+// shows the passband shape, not the exact non-linear motion response.
 function discBandImpulse(): number[] {
   const { b0, b1, b2, a1, a2 } = DISC_BIQUAD;
   const nb0 = b0 / Q29, nb1 = b1 / Q29, nb2 = b2 / Q29, na1 = a1 / Q29, na2 = a2 / Q29;
-  let x1 = 0, x2 = 0, y1 = 0, y2 = 0; // biquad state
-  let ema = 0; // motion-HP tracker
-  const aHP = 1 / 2 ** 7; // DYN_MHP_SHIFT
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0; // input LPF biquad (10 Hz)
+  let s1 = 0, s2 = 0; // band-pass EMA pair
+  const aUp = 1 / 2 ** 4; // DYN_BP_SHIFT1 — upper edge ~10 Hz
+  const aLo = 1 / 2 ** 9; // DYN_BP_SHIFT2 — lower edge (REACT default)
   const h = new Array<number>(M);
   for (let n = 0; n < M; n++) {
     const x = n === 0 ? 1 : 0;
-    const yb = nb0 * x + nb1 * x1 + nb2 * x2 - na1 * y1 - na2 * y2;
+    const yb = nb0 * x + nb1 * x1 + nb2 * x2 - na1 * y1 - na2 * y2; // LPF 10 Hz
     x2 = x1; x1 = x; y2 = y1; y1 = yb;
-    h[n] = yb - ema; // high-pass = signal − EMA(signal)
-    ema += aHP * (yb - ema);
+    s1 += aUp * (yb - s1); // band-pass pair on the LPF output
+    h[n] = 2 * (s1 - s2);
+    s2 += aLo * (s1 - s2);
   }
   return h;
+}
+
+// Exact frequency response of a Q15 biquad cascade, evaluated from the transfer
+// function H(e^jw) = Π (b0+b1e^-jw+b2e^-2jw)/(1+a1e^-jw+a2e^-2jw). Analytic (no
+// impulse-response truncation), so high-Q resonators (e.g. the +60 dB build) stay
+// ripple-free. Magnitude normalised to its peak, same shape as freqResponseDb.
+function biqNFreqDb(stages: BiqStage[], fs: number, nf = 1024): { f: number[]; db: number[] } {
+  const f = new Array<number>(nf);
+  const db = new Array<number>(nf);
+  const mags = new Array<number>(nf);
+  let maxMag = 1e-12;
+  for (let k = 0; k < nf; k++) {
+    const freq = (k / (nf - 1)) * (fs / 2);
+    f[k] = freq;
+    const w = (2 * Math.PI * freq) / fs;
+    const c1 = Math.cos(w), s1 = Math.sin(w), c2 = Math.cos(2 * w), s2 = Math.sin(2 * w);
+    let re = 1, im = 0; // running product of per-stage responses
+    for (const st of stages) {
+      const b0 = st.b0 / Q15, b1 = st.b1 / Q15, b2 = st.b2 / Q15, a1 = st.a1 / Q15, a2 = st.a2 / Q15;
+      const numRe = b0 + b1 * c1 + b2 * c2, numIm = -(b1 * s1 + b2 * s2);
+      const denRe = 1 + a1 * c1 + a2 * c2, denIm = -(a1 * s1 + a2 * s2);
+      const denMag = denRe * denRe + denIm * denIm;
+      const hRe = (numRe * denRe + numIm * denIm) / denMag;
+      const hIm = (numIm * denRe - numRe * denIm) / denMag;
+      const pRe = re * hRe - im * hIm;
+      im = re * hIm + im * hRe;
+      re = pRe;
+    }
+    mags[k] = Math.hypot(re, im);
+    if (mags[k] > maxMag) maxMag = mags[k];
+  }
+  for (let k = 0; k < nf; k++) db[k] = 20 * Math.log10(mags[k] / maxMag + 1e-9);
+  return { f, db };
 }
 
 function freqResponseDb(h: number[], fs: number, nf = 256): { f: number[]; db: number[] } {
@@ -201,6 +284,7 @@ type Preset = {
   sat?: number;
   satTable?: SatTable;
   win?: number;
+  stages?: BiqStage[]; // for kind "biqN": the cascade's Q15 biquad stages
   hp?: boolean; // firmware applies this tracker as `signal − EMA` = high-pass
   note: string;
 };
@@ -209,10 +293,11 @@ type Preset = {
 // ema_init / ema_a_init / biquad_set in src/modes/*. See docs/FILTRY-DSP.md.
 const TAKTYK_PRESETS: Preset[] = [
   { id: "deeplp", label: "DEEP/PIN/PROS LP", kind: "lp2", shift1: 5, note: "DEEP/PROS/PIN: 2-pole EMA cascade, shift 5 — anti-noise low-pass ~3.2 Hz" },
-  { id: "disc", label: "DISC LP", kind: "biquad", note: "DISC: 2nd-order Butterworth biquad (Q29 BP_LPF), −3 dB ≈ 14 Hz (anti-noise + 50 Hz reject)" },
-  { id: "discband", label: "DISC motion band", kind: "discband", note: "DISC effective motion passband ≈ 1.2–14 Hz: biquad 14 Hz × motion HP (1−EMA shift7). Linear approx — real path rectifies |.| between the two stages." },
-  { id: "discbase", label: "DISC baseline", kind: "ema", shift1: 10, note: "DISC ground baseline EMA shift10 (~0.16 Hz). Firmware applies it as l − EMA = high-pass → use the 'response: high-pass' toggle." },
-  { id: "discmhp", label: "DISC motion-HP", kind: "ema", shift1: 7, note: "DISC motion tracker EMA shift7 (~1.2 Hz). Firmware applies it as A − EMA = motion high-pass → 'response: high-pass'." },
+  { id: "disc", label: "DISC LP", kind: "biquad", note: "DISC: 2nd-order Butterworth biquad (Q29 BP_LPF), −3 dB ≈ 10 Hz (lowered from 14 Hz — anti-noise + 50 Hz reject)" },
+  { id: "discband", label: "DISC motion band", kind: "discband", note: "DISC effective motion band: biquad LP 10 Hz → band-pass 2·(EMA shift4 − EMA shift9). Linear approx — real path half-wave rectifies the band-pass output." },
+  { id: "discbp", label: "DISC band-pass", kind: "bp", shift1: 4, shift2: 9, note: "DISC motion band-pass pair 2·(EMA s1 − EMA s2): s1 shift4 (~10 Hz upper edge), s2 shift9 (lower edge). REACT 1..5 sets s2 = 11−react. Real poles → does not ring." },
+  { id: "discbase", label: "DISC baseline", kind: "ema", shift1: 11, note: "DISC ground baseline EMA shift11 (~0.08 Hz). Firmware applies it as l − EMA = high-pass → use the 'response: high-pass' toggle." },
+  { id: "didx", label: "DISC-IDX band", kind: "biqN", stages: SBX_CLASSIC3_2, note: "DISC-IDX test channel: 2-stage Q15 biquad cascade — digital clone of White's Classic III analog motion filter. Peak 7.2 Hz, +42.7 dB, −3 dB ≈ 4–13 Hz @ 1 kHz. Resonant (rings), unlike the DISC real-pole band-pass." },
   { id: "ground", label: "ground track", kind: "ema", shift1: 9, note: "ground tracker EMA shift9 (~0.31 Hz). Applied as in − EMA = high-pass." },
   { id: "pinavg", label: "PIN average", kind: "ema", shift1: 8, note: "pinpoint baseline EMA shift8 (~0.62 Hz). Applied as raw − EMA = high-pass." },
   { id: "deepsat", label: "DEEP SAT", kind: "sat", satTable: "deep", sat: 10, note: "DEEP SAT noise/baseline tracker EMA_α (SAT_ALPHA); level sets α. Applied as static_mag − EMA_α = high-pass auto-zero." },
@@ -230,7 +315,15 @@ const MXT_PRESETS: Preset[] = [
   { id: "mxtsat", label: "MXT SAT env", kind: "box", win: 5, note: "VSAT: max over 5 log-magnitude samples, gated by phase crossings (update_vsat_envelope_tracker) — Prospecting zip/boing + HyperSAT. Shown as 5-sample moving average; real max-filter is non-LTI." },
 ];
 
-type ProjectId = "taktyk" | "mxt";
+// filters_sandbox/*.c — experimental cascades, PREVIEW ONLY (not wired into firmware).
+const SANDBOX_PRESETS: Preset[] = [
+  { id: "sbx2", label: "Classic III ×2", kind: "biqN", stages: SBX_CLASSIC3_2, note: "biquad_1_2stage.c — 2-stage Classic III motion clone, peak 7.2 Hz, +42.7 dB. Same as DISC-IDX/DIDX." },
+  { id: "sbx3", label: "Classic III ×3", kind: "biqN", stages: SBX_CLASSIC3_3, note: "biquad_1_3stage.c — 3-stage version (3rd stage = 2nd): steeper skirts, higher gain/Q than the ×2." },
+  { id: "sbxg60", label: "Neila 7 Hz +60 dB", kind: "biqN", stages: SBX_NEILA_7HZ_G60, note: "biquad_3_neila_7hz_gain60.c — 3× resonant biquad centred 7 Hz, ≈+60 dB. Per-stage poles 0.975/0.984/0.991 (very high Q)." },
+  { id: "sbx0", label: "Neila 7 Hz 0 dB", kind: "biqN", stages: SBX_NEILA_7HZ_0DB, note: "biquad_3_nelia_7hz.c — same 3-pole 7 Hz design scaled to ≈0 dB net gain (numerators /10 vs the +60 dB build)." },
+];
+
+type ProjectId = "taktyk" | "mxt" | "sandbox";
 const PROJECTS: { id: ProjectId; label: string; presets: Preset[]; desc: string }[] = [
   {
     id: "taktyk",
@@ -244,6 +337,12 @@ const PROJECTS: { id: ProjectId; label: string; presets: Preset[]; desc: string 
     presets: MXT_PRESETS,
     desc: "ONE shared pipeline for all programs (Coin&Jewelry / Relic / Prospecting + Pinpoint). Programs differ in audio + discrimination, NOT in these filters — so presets are pipeline stages, not modes.",
   },
+  {
+    id: "sandbox",
+    label: "sandbox",
+    presets: SANDBOX_PRESETS,
+    desc: "filters_sandbox/*.c — hand-designed Q15 biquad cascades, PREVIEW ONLY (not wired into firmware; the .ipynb notebooks synthesise them). Use the stage toggle to inspect each biquad and the full cascade.",
+  },
 ];
 
 export function FilterLab() {
@@ -256,7 +355,11 @@ export function FilterLab() {
   const [satTable, setSatTable] = useState<SatTable>("pros");
   const [winN, setWinN] = useState(5); // boxcar window (MXT SAT env)
   const [resp, setResp] = useState<"lp" | "hp">("lp"); // show EMA as low-pass or its high-pass complement
+  const [stage, setStage] = useState<number>(0); // cascade filters: 0 = full cascade, k = stage k alone
+  const [stages, setStages] = useState<BiqStage[]>(SBX_CLASSIC3_2); // active biqN cascade
   const [fs, setFs] = useState(1000);
+  const [tZoom, setTZoom] = useState(1); // x-axis zoom (fraction of full range) — time-domain charts
+  const [fZoom, setFZoom] = useState(1); // x-axis zoom — frequency chart
 
   const projectMeta = PROJECTS.find((p) => p.id === project)!;
   const presets = projectMeta.presets;
@@ -268,7 +371,9 @@ export function FilterLab() {
     if (p.sat != null) setSatLevel(p.sat);
     if (p.satTable != null) setSatTable(p.satTable);
     if (p.win != null) setWinN(p.win);
+    if (p.stages != null) setStages(p.stages);
     setResp(p.hp ? "hp" : "lp");
+    setStage(0); // start each preset at the full cascade
     setActivePreset(p.id);
   };
 
@@ -287,7 +392,7 @@ export function FilterLab() {
   const bumpWin = (d: number) => setWinN((s) => Math.min(32, Math.max(2, s + d)));
   const onResp = (r: "lp" | "hp") => setResp(r);
 
-  const { impData, frData, band3Label, settlingMs, overshootPct, coeffText } = useMemo(() => {
+  const { impInData, impData, frData, band3Label, settlingMs, overshootPct, coeffText } = useMemo(() => {
     const a1 = 1 / 2 ** shift1;
     const a2 = 1 / 2 ** shift2;
     const satRaw = (satTable === "deep" ? DEEP_SAT_ALPHA : PROS_SAT_ALPHA)[satLevel - 1];
@@ -298,11 +403,14 @@ export function FilterLab() {
       h = emaImpulse(a1);
       coeff = `α = 1/2^${shift1} = ${a1.toFixed(4)}`;
     } else if (kind === "lp2") {
-      h = lp2Impulse(a1);
-      coeff = `2× EMA, α = 1/2^${shift1} = ${a1.toFixed(4)}`;
+      h = stage === 1 ? emaImpulse(a1) : lp2Impulse(a1);
+      coeff = `${stage === 1 ? "stage 1 — 1× EMA" : "cascade — 2× EMA"}, α = 1/2^${shift1} = ${a1.toFixed(4)}`;
     } else if (kind === "bp") {
-      h = bpImpulse(a1, a2);
-      coeff = `α1 = 1/2^${shift1}, α2 = 1/2^${shift2}`;
+      h = stage === 1 ? emaImpulse(a1) : bpImpulse(a1, a2);
+      coeff =
+        stage === 1
+          ? `stage 1 — EMA s1, α1 = 1/2^${shift1} = ${a1.toFixed(4)}`
+          : `cascade — BP 2·(s1−s2), α1 = 1/2^${shift1}, α2 = 1/2^${shift2}`;
     } else if (kind === "sat") {
       h = emaImpulse(satAlpha);
       coeff = `${satTable === "deep" ? "DEEP SAT" : "PROS VSAT"} ${satLevel}: α = ${satRaw}/32768 = ${satAlpha.toFixed(4)}`;
@@ -311,7 +419,14 @@ export function FilterLab() {
       coeff = `${winN}-tap moving average (boxcar), 1/${winN} each — MXT SAT env window (real = max-of-${winN})`;
     } else if (kind === "discband") {
       h = discBandImpulse();
-      coeff = `DISC motion band ≈ biquad 14 Hz × HP(1−EMA shift7) — linear, ignores |.| rectifier`;
+      coeff = `DISC motion band: biquad LP 10 Hz → band-pass 2·(EMA s4 − EMA s9) — linear, ignores half-wave |.|`;
+    } else if (kind === "biqN") {
+      const single = stage >= 1 && stage <= stages.length;
+      h = biqNImpulse(single ? [stages[stage - 1]] : stages);
+      const fmt = (s: BiqStage) => `[${s.b0},${s.b1},${s.b2}|${s.a1},${s.a2}]`;
+      coeff = single
+        ? `stage ${stage}/${stages.length} (Q15): ${fmt(stages[stage - 1])}`
+        : `cascade ${stages.length}× (Q15): ${stages.map(fmt).join(" → ")}`;
     } else {
       const { b0, b1, b2, a1: ba1, a2: ba2 } = DISC_BIQUAD;
       h = biquadImpulse(b0 / Q29, b1 / Q29, b2 / Q29, ba1 / Q29, ba2 / Q29);
@@ -327,8 +442,24 @@ export function FilterLab() {
     }
 
     const xs = h.map((_, n) => (n / fs) * 1000); // ms
-    const fr = freqResponseDb(h, fs);
+    // biqN: exact analytic response (no truncation); others: DFT of the impulse.
+    const frSel = kind === "biqN" ? (stage >= 1 && stage <= stages.length ? [stages[stage - 1]] : stages) : null;
+    const fr = frSel ? biqNFreqDb(frSel, fs, 1024) : freqResponseDb(h, fs, 1024); // denser grid so x-zoom stays smooth
     const { settlingMs, overshootPct } = stepMetrics(h, fs);
+
+    // Stimulus = finite, positive, triangular pulse (a target sweep), plus the
+    // filter's LTI response to it = convolution(triangle, h). Replaces the trivial
+    // δ input: shows a real input waveform and the shaped output it produces.
+    const TW = 96; // triangle width (samples)
+    const half = TW / 2;
+    const xin = xs.map((_, n) => (n >= TW ? 0 : n <= half ? n / half : (TW - n) / half));
+    const yout = new Array<number>(M).fill(0);
+    for (let k = 0; k < M; k++) {
+      let acc = 0;
+      const jmax = Math.min(k, TW - 1);
+      for (let j = 0; j <= jmax; j++) acc += xin[j] * h[k - j];
+      yout[k] = acc;
+    }
 
     // Name the −3 dB band by shape: low-pass → upper cutoff; high-pass → lower
     // cutoff; band-pass → both edges.
@@ -342,38 +473,64 @@ export function FilterLab() {
     else band3Label = `−3 dB 0–${fr.f[fr.f.length - 1].toFixed(0)} Hz`;
 
     return {
-      impData: [xs, h] as unknown as uPlot.AlignedData,
+      impInData: [xs, xin] as unknown as uPlot.AlignedData,
+      impData: [xs, yout] as unknown as uPlot.AlignedData,
       frData: [fr.f, fr.db] as unknown as uPlot.AlignedData,
       band3Label,
       settlingMs,
       overshootPct,
       coeffText: coeff,
     };
-  }, [kind, shift1, shift2, satLevel, satTable, winN, resp, fs]);
+  }, [kind, shift1, shift2, satLevel, satTable, winN, resp, stage, stages, fs]);
 
+  const impInHost = useRef<HTMLDivElement | null>(null);
   const impHost = useRef<HTMLDivElement | null>(null);
   const frHost = useRef<HTMLDivElement | null>(null);
+  const impInRead = useRef<HTMLSpanElement | null>(null);
   const impRead = useRef<HTMLSpanElement | null>(null);
   const frRead = useRef<HTMLSpanElement | null>(null);
+  const uImpIn = useRef<uPlot | null>(null);
   const uImp = useRef<uPlot | null>(null);
   const uFr = useRef<uPlot | null>(null);
   const fsRef = useRef(fs);
-  const dataRef = useRef({ impData, frData });
+  const tZoomRef = useRef(tZoom);
+  const fZoomRef = useRef(fZoom);
+  const dataRef = useRef({ impInData, impData, frData });
   useEffect(() => {
     fsRef.current = fs;
-    dataRef.current = { impData, frData };
+    tZoomRef.current = tZoom;
+    fZoomRef.current = fZoom;
+    dataRef.current = { impInData, impData, frData };
   });
 
   useEffect(() => {
+    const iih = impInHost.current;
     const ih = impHost.current;
     const fh = frHost.current;
-    if (!ih || !fh) return;
+    if (!iih || !ih || !fh) return;
 
+    if (!uImpIn.current) {
+      uImpIn.current = makePlot(
+        iih,
+        [{ label: "x[n]", stroke: "#f59e0b", width: 1, points: { show: false } }],
+        () => [0, (M / fsRef.current) * 1000 * tZoomRef.current],
+        [-0.1, 1.1],
+        (u) => {
+          const i = u.cursor.idx;
+          if (!impInRead.current) return;
+          if (i == null) { impInRead.current.textContent = ""; return; }
+          const x = (u.data[0] as number[])[i];
+          const y = (u.data[1] as number[])[i];
+          impInRead.current.textContent = `${x.toFixed(1)} ms · ${y.toFixed(2)}`;
+        },
+      );
+      uImpIn.current.setData(dataRef.current.impInData);
+    }
     if (!uImp.current) {
       uImp.current = makePlot(
         ih,
         [{ label: "h[n]", stroke: "#10b981", width: 1, points: { show: false } }],
-        () => [0, (M / fsRef.current) * 1000],
+        () => [0, (M / fsRef.current) * 1000 * tZoomRef.current],
         () => {
           const d = dataRef.current.impData[1] as number[];
           // A high-pass impulse is δ[0] − EMA, so h[0] ≈ 1 dwarfs the
@@ -410,7 +567,7 @@ export function FilterLab() {
       uFr.current = makePlot(
         fh,
         [{ label: "|H| dB", stroke: "#3b82f6", width: 1, points: { show: false } }],
-        () => [0, fsRef.current / 2],
+        () => [0, (fsRef.current / 2) * fZoomRef.current],
         [-60, 3],
         (u) => {
           const i = u.cursor.idx;
@@ -426,6 +583,7 @@ export function FilterLab() {
 
     const fit = () => {
       for (const [host, u] of [
+        [iih, uImpIn.current],
         [ih, uImp.current],
         [fh, uFr.current],
       ] as const) {
@@ -438,21 +596,35 @@ export function FilterLab() {
     };
     fit();
     const ro = new ResizeObserver(fit);
+    ro.observe(iih);
     ro.observe(ih);
     ro.observe(fh);
     return () => {
       ro.disconnect();
+      uImpIn.current?.destroy();
       uImp.current?.destroy();
       uFr.current?.destroy();
+      uImpIn.current = null;
       uImp.current = null;
       uFr.current = null;
     };
   }, []);
 
   useEffect(() => {
+    uImpIn.current?.setData(impInData);
     uImp.current?.setData(impData);
     uFr.current?.setData(frData);
-  }, [impData, frData]);
+  }, [impInData, impData, frData]);
+
+  // X-axis zoom: time-domain charts share one window, frequency has its own.
+  useEffect(() => {
+    const tMax = (M / fs) * 1000 * tZoom;
+    uImpIn.current?.setScale("x", { min: 0, max: tMax });
+    uImp.current?.setScale("x", { min: 0, max: tMax });
+  }, [tZoom, fs]);
+  useEffect(() => {
+    uFr.current?.setScale("x", { min: 0, max: (fs / 2) * fZoom });
+  }, [fZoom, fs]);
 
   const btn = (active: boolean) =>
     `rounded border px-2 py-0.5 text-xs transition-colors ${
@@ -461,6 +633,8 @@ export function FilterLab() {
   const lbl = "text-[10px] font-semibold uppercase tracking-wider text-muted";
 
   const showShift = kind === "ema" || kind === "lp2" || kind === "bp";
+  // Stage toggle: biqN has one button per biquad; lp2/bp expose only stage 1 vs cascade.
+  const stageCount = kind === "biqN" ? stages.length : kind === "lp2" || kind === "bp" ? 1 : 0;
 
   return (
     <div className="flex flex-col gap-3">
@@ -489,9 +663,9 @@ export function FilterLab() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1">
           <span className={lbl}>type</span>
-          {(["ema", "lp2", "bp", "biquad", "sat", "box", "discband"] as Kind[]).map((k) => (
+          {(["ema", "lp2", "bp", "biquad", "biqN", "sat", "box", "discband"] as Kind[]).map((k) => (
             <button key={k} onClick={() => onKind(k)} className={btn(kind === k)}>
-              {k === "lp2" ? "2-pole" : k === "bp" ? "band-pass" : k === "biquad" ? "biquad" : k === "box" ? "moving-avg" : k === "discband" ? "DISC-band" : k.toUpperCase()}
+              {k === "lp2" ? "2-pole EMA" : k === "bp" ? "band-pass" : k === "biquad" ? "biquad" : k === "biqN" ? "biquad×N" : k === "box" ? "moving-avg" : k === "discband" ? "DISC-band" : k.toUpperCase()}
             </button>
           ))}
         </div>
@@ -500,6 +674,15 @@ export function FilterLab() {
             <span className={lbl}>response</span>
             <button onClick={() => onResp("lp")} className={btn(resp === "lp")}>low-pass</button>
             <button onClick={() => onResp("hp")} className={btn(resp === "hp")}>high-pass</button>
+          </div>
+        )}
+        {stageCount >= 1 && (
+          <div className="flex items-center gap-1">
+            <span className={lbl}>stage</span>
+            <button onClick={() => setStage(0)} className={btn(stage === 0)}>cascade</button>
+            {Array.from({ length: stageCount }, (_, i) => i + 1).map((k) => (
+              <button key={k} onClick={() => setStage(k)} className={btn(stage === k)}>{k}</button>
+            ))}
           </div>
         )}
         {showShift && (
@@ -557,13 +740,29 @@ export function FilterLab() {
         <span>overshoot {overshootPct == null ? "—" : `${overshootPct.toFixed(1)} %`}</span>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-3">
         <div>
           <p className="mb-1 flex items-center justify-between text-xs text-muted">
-            <span>impulse response h[n] · x: ms</span>
+            <span>input: triangle pulse x[n] · x: ms</span>
+            <span ref={impInRead} className="font-mono tabular-nums text-foreground" />
+          </p>
+          <div ref={impInHost} className="h-64 w-full" />
+        </div>
+        <div>
+          <p className="mb-1 flex items-center justify-between text-xs text-muted">
+            <span>response y[n] = filter(x) · x: ms</span>
             <span ref={impRead} className="font-mono tabular-nums text-foreground" />
           </p>
           <div ref={impHost} className="h-64 w-full" />
+          <div className="mt-1 flex items-center gap-2 text-[10px] text-muted">
+            <span className="uppercase tracking-wider">x-zoom</span>
+            <input
+              type="range" min={2} max={100} step={1} value={Math.round(tZoom * 100)}
+              onChange={(e) => setTZoom(Number(e.target.value) / 100)}
+              className="flex-1 accent-[#10b981]"
+            />
+            <span className="w-20 text-right font-mono tabular-nums text-foreground">0–{((M / fs) * 1000 * tZoom).toFixed(0)} ms</span>
+          </div>
         </div>
         <div>
           <p className="mb-1 flex items-center justify-between text-xs text-muted">
@@ -571,6 +770,15 @@ export function FilterLab() {
             <span ref={frRead} className="font-mono tabular-nums text-foreground" />
           </p>
           <div ref={frHost} className="h-64 w-full" />
+          <div className="mt-1 flex items-center gap-2 text-[10px] text-muted">
+            <span className="uppercase tracking-wider">x-zoom</span>
+            <input
+              type="range" min={2} max={100} step={1} value={Math.round(fZoom * 100)}
+              onChange={(e) => setFZoom(Number(e.target.value) / 100)}
+              className="flex-1 accent-[#3b82f6]"
+            />
+            <span className="w-20 text-right font-mono tabular-nums text-foreground">0–{((fs / 2) * fZoom).toFixed(0)} Hz</span>
+          </div>
         </div>
       </div>
     </div>
