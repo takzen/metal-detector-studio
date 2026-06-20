@@ -167,8 +167,6 @@ function discBandImpulse(): number[] {
 function biqNFreqDb(stages: BiqStage[], fs: number, nf = 1024): { f: number[]; db: number[] } {
   const f = new Array<number>(nf);
   const db = new Array<number>(nf);
-  const mags = new Array<number>(nf);
-  let maxMag = 1e-12;
   for (let k = 0; k < nf; k++) {
     const freq = (k / (nf - 1)) * (fs / 2);
     f[k] = freq;
@@ -186,18 +184,14 @@ function biqNFreqDb(stages: BiqStage[], fs: number, nf = 1024): { f: number[]; d
       im = re * hIm + im * hRe;
       re = pRe;
     }
-    mags[k] = Math.hypot(re, im);
-    if (mags[k] > maxMag) maxMag = mags[k];
+    db[k] = 20 * Math.log10(Math.hypot(re, im) + 1e-9); // absolute gain (not peak-normalised)
   }
-  for (let k = 0; k < nf; k++) db[k] = 20 * Math.log10(mags[k] / maxMag + 1e-9);
   return { f, db };
 }
 
 function freqResponseDb(h: number[], fs: number, nf = 256): { f: number[]; db: number[] } {
   const f = new Array<number>(nf);
   const db = new Array<number>(nf);
-  const mags = new Array<number>(nf);
-  let maxMag = 1e-12;
   for (let k = 0; k < nf; k++) {
     const freq = (k / (nf - 1)) * (fs / 2);
     f[k] = freq;
@@ -208,10 +202,8 @@ function freqResponseDb(h: number[], fs: number, nf = 256): { f: number[]; db: n
       re += h[n] * Math.cos(w * n);
       im -= h[n] * Math.sin(w * n);
     }
-    mags[k] = Math.hypot(re, im);
-    if (mags[k] > maxMag) maxMag = mags[k];
+    db[k] = 20 * Math.log10(Math.hypot(re, im) + 1e-9); // absolute gain (not peak-normalised)
   }
-  for (let k = 0; k < nf; k++) db[k] = 20 * Math.log10(mags[k] / maxMag + 1e-9);
   return { f, db };
 }
 
@@ -360,6 +352,8 @@ export function FilterLab() {
   const [fs, setFs] = useState(1000);
   const [tZoom, setTZoom] = useState(1); // x-axis zoom (fraction of full range) — time-domain charts
   const [fZoom, setFZoom] = useState(1); // x-axis zoom — frequency chart
+  const [yMag, setYMag] = useState(1); // response chart: vertical magnification (1 = auto-fit)
+  const [fDbSpan, setFDbSpan] = useState(90); // frequency chart: visible dB window height
 
   const projectMeta = PROJECTS.find((p) => p.id === project)!;
   const presets = projectMeta.presets;
@@ -462,10 +456,13 @@ export function FilterLab() {
     }
 
     // Name the −3 dB band by shape: low-pass → upper cutoff; high-pass → lower
-    // cutoff; band-pass → both edges.
-    const b3 = band(fr, -3);
-    const dcPass = fr.db[0] >= -3;
-    const nyqPass = fr.db[fr.db.length - 1] >= -3;
+    // cutoff; band-pass → both edges. Threshold is −3 dB BELOW the peak (response is
+    // absolute dB now, so a +42 dB resonator's band is peak−3, not the 0 dB line).
+    const peakDb = fr.db.reduce((m, v) => (v > m ? v : m), -Infinity);
+    const thr3 = peakDb - 3;
+    const b3 = band(fr, thr3);
+    const dcPass = fr.db[0] >= thr3;
+    const nyqPass = fr.db[fr.db.length - 1] >= thr3;
     let band3Label: string;
     if (dcPass && !nyqPass) band3Label = `−3 dB @ ${b3[1].toFixed(1)} Hz`;
     else if (!dcPass && nyqPass) band3Label = `−3 dB @ ${b3[0].toFixed(1)} Hz (HP)`;
@@ -495,11 +492,15 @@ export function FilterLab() {
   const fsRef = useRef(fs);
   const tZoomRef = useRef(tZoom);
   const fZoomRef = useRef(fZoom);
+  const yMagRef = useRef(yMag);
+  const fDbSpanRef = useRef(fDbSpan);
   const dataRef = useRef({ impInData, impData, frData });
   useEffect(() => {
     fsRef.current = fs;
     tZoomRef.current = tZoom;
     fZoomRef.current = fZoom;
+    yMagRef.current = yMag;
+    fDbSpanRef.current = fDbSpan;
     dataRef.current = { impInData, impData, frData };
   });
 
@@ -550,7 +551,10 @@ export function FilterLab() {
             if (v > hi) hi = v;
           }
           const p = (hi - lo) * 0.1 || 0.1;
-          return [lo - p, hi + p];
+          // Auto-fit [lo-p, hi+p], then apply vertical magnification around centre.
+          const a = lo - p, b = hi + p;
+          const c = (a + b) / 2, half = (b - a) / 2 / yMagRef.current;
+          return [c - half, c + half];
         },
         (u) => {
           const i = u.cursor.idx;
@@ -568,7 +572,16 @@ export function FilterLab() {
         fh,
         [{ label: "|H| dB", stroke: "#3b82f6", width: 1, points: { show: false } }],
         () => [0, (fsRef.current / 2) * fZoomRef.current],
-        [-60, 3],
+        () => {
+          // Absolute dB: anchor the window to the peak gain so filters with gain
+          // (+42 dB DIDX, +60 dB Neila) show their real level; 80 dB span below.
+          const d = dataRef.current.frData[1] as number[];
+          let mx = -Infinity;
+          for (let i = 0; i < d.length; i++) if (d[i] > mx) mx = d[i];
+          if (!isFinite(mx)) mx = 0;
+          const top = Math.max(3, mx + 3); // peak pinned near the top, always visible
+          return [top - fDbSpanRef.current, top];
+        },
         (u) => {
           const i = u.cursor.idx;
           if (!frRead.current) return;
@@ -614,7 +627,7 @@ export function FilterLab() {
     uImpIn.current?.setData(impInData);
     uImp.current?.setData(impData);
     uFr.current?.setData(frData);
-  }, [impInData, impData, frData]);
+  }, [impInData, impData, frData, yMag, fDbSpan]);
 
   // X-axis zoom: time-domain charts share one window, frequency has its own.
   useEffect(() => {
@@ -763,6 +776,15 @@ export function FilterLab() {
             />
             <span className="w-20 text-right font-mono tabular-nums text-foreground">0–{((M / fs) * 1000 * tZoom).toFixed(0)} ms</span>
           </div>
+          <div className="mt-1 flex items-center gap-2 text-[10px] text-muted">
+            <span className="uppercase tracking-wider">y-zoom</span>
+            <input
+              type="range" min={0.2} max={6} step={0.1} value={yMag}
+              onChange={(e) => setYMag(Number(e.target.value))}
+              className="flex-1 accent-[#10b981]"
+            />
+            <span className="w-20 text-right font-mono tabular-nums text-foreground">×{yMag.toFixed(1)}</span>
+          </div>
         </div>
         <div>
           <p className="mb-1 flex items-center justify-between text-xs text-muted">
@@ -778,6 +800,15 @@ export function FilterLab() {
               className="flex-1 accent-[#3b82f6]"
             />
             <span className="w-20 text-right font-mono tabular-nums text-foreground">0–{((fs / 2) * fZoom).toFixed(0)} Hz</span>
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-[10px] text-muted">
+            <span className="uppercase tracking-wider">y-span</span>
+            <input
+              type="range" min={20} max={140} step={5} value={fDbSpan}
+              onChange={(e) => setFDbSpan(Number(e.target.value))}
+              className="flex-1 accent-[#3b82f6]"
+            />
+            <span className="w-20 text-right font-mono tabular-nums text-foreground">{fDbSpan} dB</span>
           </div>
         </div>
       </div>
