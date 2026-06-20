@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePersistentState } from "@/lib/usePersistentState";
+import type { FeatureFrame, Harmonic } from "@/lib/types";
 
 // Sandbox for I/Q axis auto-calibration (PhaseLab).
 //
@@ -27,7 +28,7 @@ const C_TXT = "#8b98a9";
 
 type PlaneOpts = {
   title: string;
-  axisDeg: number; // ground / probe reference axis direction
+  axisDeg?: number; // ground / probe reference axis direction (omit = none, e.g. raw physical plane)
   vecDeg: number; // target vector angle
   vecAmp: number; // 0..1
   vecLabel: string;
@@ -51,8 +52,8 @@ function drawPlane(canvas: HTMLCanvasElement, o: PlaneOpts) {
   const cx = w / 2;
   const cy = h / 2;
   const R = (Math.min(w, h) / 2) * 0.9;
-  // math plane: angle CCW from +X, +Y up (screen y flipped)
-  const pt = (deg: number, r: number) => ({ x: cx + r * Math.cos(deg * D2R), y: cy - r * Math.sin(deg * D2R) });
+  // mirrored X so 0° sits on the LEFT (matches the hodograph / device); +Y up.
+  const pt = (deg: number, r: number) => ({ x: cx - r * Math.cos(deg * D2R), y: cy - r * Math.sin(deg * D2R) });
 
   // grid rings
   ctx.lineWidth = 1;
@@ -74,8 +75,38 @@ function drawPlane(canvas: HTMLCanvasElement, o: PlaneOpts) {
   ctx.font = "10px var(--font-geist-mono), monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("X", cx + R - 6, cy + 10);
+  ctx.fillText("X", cx - R + 8, cy + 10); // +X (I) on the left (mirrored)
   ctx.fillText("Y", cx + 10, cy - R + 6);
+
+  // degree protractor — IDENTICAL to the hodograph: 15° ticks, major every 30°,
+  // faint spoke + signed label (top 0..+180, bottom −180..0), 0° on the left.
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let d = 0; d < 360; d += 15) {
+    const major = d % 30 === 0;
+    if (major) {
+      const sp = pt(d, R);
+      ctx.strokeStyle = "#141b24";
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(sp.x, sp.y);
+      ctx.stroke();
+    }
+    const t0 = pt(d, R * (major ? 0.92 : 0.96));
+    const t1 = pt(d, R);
+    ctx.strokeStyle = "#2a3342";
+    ctx.beginPath();
+    ctx.moveTo(t0.x, t0.y);
+    ctx.lineTo(t1.x, t1.y);
+    ctx.stroke();
+    if (major) {
+      const lbl = d <= 180 ? d : d - 360;
+      const lp = pt(d, R * 0.83);
+      ctx.fillStyle = C_TXT;
+      ctx.font = "10px var(--font-geist-mono), monospace";
+      ctx.fillText(`${lbl}°`, lp.x, lp.y);
+    }
+  }
 
   // discrimination boundary (half-line at discDeg)
   if (o.discDeg != null) {
@@ -91,8 +122,8 @@ function drawPlane(canvas: HTMLCanvasElement, o: PlaneOpts) {
     ctx.globalAlpha = 1;
   }
 
-  // ground / probe reference axis (full diameter, dashed)
-  {
+  // ground / probe reference axis (full diameter, dashed) — omitted on the raw plane
+  if (o.axisDeg != null) {
     const a = pt(o.axisDeg, R);
     ctx.strokeStyle = C_AXIS;
     ctx.globalAlpha = 0.9;
@@ -168,17 +199,22 @@ function Read({ label, v, warn }: { label: string; v: string; warn?: boolean }) 
   return (
     <span className="flex items-center gap-1.5">
       <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">{label}</span>
-      <span className={`tabular-nums ${warn ? "text-amber-400" : "text-foreground"}`}>{v}</span>
+      <span className={`inline-block w-16 text-right tabular-nums ${warn ? "text-amber-400" : "text-foreground"}`}>{v}</span>
     </span>
   );
 }
 
-export function PhaseLab() {
+export function PhaseLab({ featureRef, harmonics }: {
+  featureRef: React.RefObject<FeatureFrame | null>;
+  harmonics: Harmonic[];
+}) {
+  const [mode, setMode] = usePersistentState<"manual" | "live">("phaseMode", "manual"); // synthetic vs live probe
+  const [ema, setEma] = usePersistentState("phaseEma", 0.2); // EMA smoothing of live I/Q (like the hodograph)
   const [theta, setTheta] = usePersistentState("phaseTheta", 25); // hardware axis rotation θ (deg)
   const [phi, setPhi] = usePersistentState("phasePhi", 60); // target TRUE phase (deg)
   const [amp, setAmp] = usePersistentState("phaseAmp", 0.7); // 0..1
   const [thetaMeas, setThetaMeas] = usePersistentState("phaseThetaMeas", 0); // measured calibration angle
-  const [disc, setDisc] = usePersistentState("phaseDisc", 0); // discrimination boundary (deg)
+  const [liveRead, setLiveRead] = useState({ i: 0, q: 0, deg: 0 }); // transient: live probe I/Q readout
 
   const physRef = useRef<HTMLCanvasElement | null>(null);
   const corrRef = useRef<HTMLCanvasElement | null>(null);
@@ -186,38 +222,85 @@ export function PhaseLab() {
   const physDeg = wrap180(phi + theta); // physical target angle (rotated by θ)
   const corrDeg = wrap180(phi + theta - thetaMeas); // corrected phase the detector computes
   const residual = wrap180(theta - thetaMeas); // leftover axis error after calibration
-  const accepted = corrDeg >= disc; // simple discrimination: above the boundary → beep
+
+  const modeRef = useRef(mode);
+  const emaRef = useRef(ema);
+  const live = useRef({ i: 0, q: 0, max: 1 }); // EMA-smoothed live raw I/Q + running max for autoscale
+  useEffect(() => {
+    modeRef.current = mode;
+    emaRef.current = ema;
+  });
 
   useEffect(() => {
     const pc = physRef.current;
     const cc = corrRef.current;
     if (!pc || !cc) return;
+
     const render = () => {
+      // LEFT plane vector: manual = synthesised (φ+θ), live = real probe I/Q.
+      let pDeg = physDeg;
+      let a = amp;
+      if (modeRef.current === "live") {
+        pDeg = wrap180((Math.atan2(live.current.q, live.current.i) * 180) / Math.PI);
+        a = Math.min(1, Math.hypot(live.current.i, live.current.q) / live.current.max);
+      }
+      const cDeg = wrap180(pDeg - thetaMeas);
       drawPlane(pc, {
-        title: "physical  X'/Y'  (rotated by θ)",
-        axisDeg: theta, // probe/ground is on true +X → reads at θ here
-        vecDeg: physDeg,
-        vecAmp: amp,
-        vecLabel: `${physDeg.toFixed(0)}°`,
+        title: modeRef.current === "live" ? "physical  X'/Y'  (live probe)" : "physical  X'/Y'  (rotated by θ)",
+        axisDeg: modeRef.current === "live" ? undefined : theta, // live left = pure raw, no calibration axis
+        vecDeg: pDeg,
+        vecAmp: a,
+        vecLabel: `${pDeg.toFixed(0)}°`,
       });
       drawPlane(cc, {
         title: "corrected  X/Y  (after R(−θ_meas))",
-        axisDeg: residual, // probe/ground after correction (0 when calibrated)
-        vecDeg: corrDeg,
-        vecAmp: amp,
-        vecLabel: `${corrDeg.toFixed(0)}°`,
-        discDeg: disc,
+        axisDeg: modeRef.current === "live" ? 0 : wrap180(theta - thetaMeas),
+        vecDeg: cDeg,
+        vecAmp: a,
+        vecLabel: `${cDeg.toFixed(0)}°`,
       });
     };
-    render();
+
+    let af = 0;
+    let lastRead = 0;
+    const loop = () => {
+      af = requestAnimationFrame(loop);
+      const f = featureRef.current;
+      const h0 = harmonics[0]?.id;
+      if (f && h0 && f.harmonics[h0]) {
+        const s = f.harmonics[h0];
+        const k = emaRef.current;
+        live.current.i += k * (s.i - live.current.i);
+        live.current.q += k * (s.q - live.current.q);
+        const m = Math.hypot(live.current.i, live.current.q);
+        live.current.max = Math.max(m, live.current.max * 0.999, 1); // adopt peaks, decay slowly
+      }
+      render();
+      const now = performance.now();
+      if (now - lastRead > 100) {
+        lastRead = now;
+        const deg = wrap180((Math.atan2(live.current.q, live.current.i) * 180) / Math.PI);
+        setLiveRead({ i: live.current.i, q: live.current.q, deg });
+      }
+    };
+
+    if (mode === "live") af = requestAnimationFrame(loop);
+    else render();
     const ro = new ResizeObserver(render);
     ro.observe(pc);
     ro.observe(cc);
-    return () => ro.disconnect();
-  }, [theta, physDeg, corrDeg, residual, amp, disc]);
+    return () => {
+      cancelAnimationFrame(af);
+      ro.disconnect();
+    };
+  }, [mode, theta, physDeg, corrDeg, residual, amp, thetaMeas, featureRef, harmonics]);
 
   const btn =
     "rounded border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:text-foreground";
+  const seg = (active: boolean) =>
+    `rounded border px-2 py-0.5 text-xs transition-colors ${
+      active ? "border-accent bg-accent/10 text-foreground" : "border-border text-muted hover:text-foreground"
+    }`;
 
   return (
     <div className="flex flex-col gap-3">
@@ -229,26 +312,62 @@ export function PhaseLab() {
 
       {/* controls */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-        <Slider label="θ axis rot" value={theta} min={-90} max={90} step={1} unit="°" onChange={setTheta} />
-        <Slider label="target φ" value={phi} min={-180} max={180} step={1} unit="°" onChange={setPhi} />
-        <Slider label="amplitude" value={amp} min={0.05} max={1} step={0.05} unit="" onChange={setAmp} fmt={(v) => v.toFixed(2)} />
-        <Slider label="disc level" value={disc} min={-90} max={90} step={1} unit="°" onChange={setDisc} />
-        <div className="flex items-center gap-1.5">
-          <button
-            className={btn}
-            onClick={() => setThetaMeas(theta)}
-            title="air-balance: measure θ from the probe vector (atan2 of the no-metal reading)"
-          >
-            measure θ (air-balance)
-          </button>
-          <button className={btn} onClick={() => setThetaMeas(0)} title="clear calibration">
-            reset cal
-          </button>
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">source</span>
+          <button className={seg(mode === "manual")} onClick={() => setMode("manual")}>manual</button>
+          <button className={seg(mode === "live")} onClick={() => setMode("live")}>live</button>
         </div>
+        {mode === "live" ? (
+          <>
+            <Slider label="ema" value={ema} min={0.01} max={1} step={0.01} unit="" onChange={setEma} fmt={(v) => v.toFixed(2)} />
+            <div className="flex items-center gap-1.5">
+              <button
+                className={btn}
+                onClick={() => setThetaMeas(wrap180((Math.atan2(live.current.q, live.current.i) * 180) / Math.PI))}
+                title="air-balance: zero on the current no-metal probe vector (atan2 of the live reading)"
+              >
+                air-balance (zero)
+              </button>
+              <button className={btn} onClick={() => setThetaMeas(0)} title="clear calibration">
+                reset cal
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <Slider label="θ axis rot" value={theta} min={-90} max={90} step={1} unit="°" onChange={setTheta} />
+            <Slider label="target φ" value={phi} min={-180} max={180} step={1} unit="°" onChange={setPhi} />
+            <Slider label="amplitude" value={amp} min={0.05} max={1} step={0.05} unit="" onChange={setAmp} fmt={(v) => v.toFixed(2)} />
+            <div className="flex items-center gap-1.5">
+              <button
+                className={btn}
+                onClick={() => setThetaMeas(theta)}
+                title="air-balance: measure θ from the probe vector (atan2 of the no-metal reading)"
+              >
+                measure θ (air-balance)
+              </button>
+              <button className={btn} onClick={() => setThetaMeas(0)} title="clear calibration">
+                reset cal
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* dual hodograph: physical (rotated) vs corrected */}
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="relative grid gap-3 lg:grid-cols-2">
+        {mode === "live" && (
+          <div className="pointer-events-none absolute right-2 top-2 z-10 text-right font-mono">
+            <div className="text-[10px] uppercase tracking-wider text-muted">corrected φ</div>
+            <div className="text-3xl font-semibold leading-none tabular-nums text-foreground">
+              {wrap180(liveRead.deg - thetaMeas).toFixed(1)}°
+            </div>
+            <div className="mt-1 text-xs tabular-nums text-muted">raw {liveRead.deg.toFixed(1)}° · θ {thetaMeas.toFixed(1)}°</div>
+            <div className="text-xs tabular-nums text-muted">
+              I {liveRead.i.toFixed(0)} · Q {liveRead.q.toFixed(0)} · |{Math.hypot(liveRead.i, liveRead.q).toFixed(0)}|
+            </div>
+          </div>
+        )}
         <div className="aspect-square w-full rounded-md bg-black/20">
           <canvas ref={physRef} className="h-full w-full" />
         </div>
@@ -258,20 +377,15 @@ export function PhaseLab() {
       </div>
 
       {/* readouts */}
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-xs">
-        <Read label="θ actual" v={`${theta.toFixed(0)}°`} />
-        <Read label="θ measured" v={`${thetaMeas.toFixed(0)}°`} />
-        <Read label="axis error" v={`${residual.toFixed(0)}°`} warn={Math.abs(residual) > 1} />
-        <Read label="true φ" v={`${phi.toFixed(0)}°`} />
-        <Read label="detector reads" v={`${corrDeg.toFixed(0)}°`} />
-        <span
-          className={`rounded px-2 py-0.5 text-xs font-semibold ${
-            accepted ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"
-          }`}
-        >
-          {accepted ? "BEEP" : "MUTE"}
-        </span>
-      </div>
+      {mode === "manual" && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-xs">
+          <Read label="θ actual" v={`${theta.toFixed(0)}°`} />
+          <Read label="θ measured" v={`${thetaMeas.toFixed(0)}°`} />
+          <Read label="axis error" v={`${residual.toFixed(0)}°`} warn={Math.abs(residual) > 1} />
+          <Read label="true φ" v={`${phi.toFixed(0)}°`} />
+          <Read label="detector reads" v={`${corrDeg.toFixed(0)}°`} />
+        </div>
+      )}
     </div>
   );
 }

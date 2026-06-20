@@ -783,7 +783,7 @@ export default function Home() {
                 <MaxBtn />
               </div>
             </div>
-            <PhaseLab />
+            <PhaseLab featureRef={featureRef} harmonics={profile?.harmonics ?? []} />
           </Card>
         )}
 
