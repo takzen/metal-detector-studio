@@ -119,6 +119,16 @@ flowchart TD
   trigger, FFT span/window/dB/avg/view, recorder window/channels, hodograph offset/EMA)
   persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`6` tabs, `Enter`/`Z`
   zero, `Space` run/hold), per-chart fullscreen (`⛶`) and PNG / CSV export.
+- **USB firmware flashing:** update the detector's firmware over USB straight from the
+  **Firmware** tab — pick a `.hex` (with a host-disk file browser), one-click flash with a
+  live progress bar, state badge and programmer log, then it resets back to the app and
+  telemetry resumes. Talks to a **DFU bootloader** via `dfu-programmer` through a swappable
+  backend adapter; a **manual** mode flashes a device already held in its bootloader (no
+  Atmel-ICE / IDE needed). See [`MANUAL.md`](MANUAL.md) for the bootloader setup.
+- **Desktop app (one click):** an **Electron** shell launches the whole stack from a single
+  icon — it starts the backend (uvicorn) and frontend, reuses them if already running, and
+  opens the studio in a native window (no separate terminals, no browser tab). `Ctrl`+scroll
+  / `Ctrl ±` / `Ctrl 0` zoom; closing the window stops everything.
 - **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
   coding assistants (read frames, analyze phase/spectrum, push config) and **controls
   recording / replay** (start/stop, list, replay, go-live, delete, export CSV).
@@ -188,6 +198,8 @@ Talks to real detector hardware over USB-CDC; each device is described by a JSON
 | Session record + replay (file, all tabs + MCP) | ✅ |
 | Data export (PNG · CSV · recording→CSV) | ✅ |
 | Frame validation vs `schema.json` (jsonschema) | ✅ |
+| USB firmware flashing (DFU, Firmware tab + backend) | ✅ |
+| Desktop app (Electron one-click launcher) | ✅ |
 | MCP server (telemetry as AI tools + recording control) | ✅ |
 | Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
 | Config back to MCU over serial | 🚧 needs firmware command input |
@@ -271,6 +283,21 @@ pnpm dev
 
 Open the printed URL (default [http://localhost:3000](http://localhost:3000)) to view the
 diagnostic suite.
+
+### 3. Desktop app (one click)
+
+Instead of running the two servers and a browser by hand, launch everything from a single
+icon. After `uv sync` and `pnpm install` (above), run:
+
+```bash
+# from the repo root — opens the Electron window, starts backend + frontend
+start.cmd          # Windows (double-click, or make a desktop shortcut)
+```
+
+The Electron shell boots the backend (uvicorn) and frontend, reuses them if they are
+already running, and shows the studio in a native window. `Ctrl`+scroll / `Ctrl ±` /
+`Ctrl 0` zoom the window; closing it stops the child processes. Requires `uv` and `pnpm`
+on `PATH` (it runs the dev servers, not a packaged bundle).
 
 ## Documentation
 

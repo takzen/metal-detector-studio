@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Metal Detector Studio</title>
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        background: #0a0a0a;
+        color: #e5e5e5;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .box { text-align: center; }
+      h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 0.5rem; }
+      p { font-size: 0.85rem; color: #9ca3af; margin: 0.25rem 0; }
+      .spinner {
+        width: 28px; height: 28px; margin: 0 auto 1rem;
+        border: 3px solid #1f2937; border-top-color: #22d3ee;
+        border-radius: 50%; animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #err { display: none; color: #f87171; }
+      :target#err { display: block; }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <div class="spinner"></div>
+      <h1>Metal Detector Studio</h1>
+      <p>Starting backend &amp; frontend…</p>
+      <p id="err">Frontend did not start in time — check the terminal logs.</p>
+    </div>
+  </body>
+</html>

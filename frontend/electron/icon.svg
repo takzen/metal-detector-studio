@@ -1,0 +1,30 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0e141c"/>
+      <stop offset="1" stop-color="#070a0f"/>
+    </linearGradient>
+    <linearGradient id="coil" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <rect x="3" y="3" width="250" height="250" rx="53" fill="none" stroke="#1e2a37" stroke-width="2"/>
+
+  <!-- signal arcs radiating from the coil -->
+  <g fill="none" stroke="#22d3ee" stroke-width="7" stroke-linecap="round" opacity="0.5">
+    <path d="M150 150 q34 -6 52 -34"/>
+    <path d="M150 168 q52 -6 76 -48"/>
+  </g>
+
+  <!-- detector shaft + handle -->
+  <line x1="176" y1="44" x2="118" y2="150" stroke="#aeb8c4" stroke-width="12" stroke-linecap="round"/>
+  <path d="M176 44 l24 -6" stroke="#aeb8c4" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- search coil (perspective ellipse) -->
+  <ellipse cx="104" cy="182" rx="64" ry="30" fill="none" stroke="url(#coil)" stroke-width="14"/>
+  <!-- detected target -->
+  <circle cx="104" cy="182" r="8" fill="#67e8f9"/>
+</svg>

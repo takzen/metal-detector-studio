@@ -25,6 +25,12 @@ pnpm dev
 Open the URL printed in the console (default http://localhost:3000; if the port is
 busy, Next picks 3001, etc.).
 
+**Desktop app (one click):** after `uv sync` + `pnpm install`, run `start.cmd` from the
+repo root (or use the desktop shortcut). It opens an Electron window that starts the
+backend and frontend itself (reusing them if already running) and shows the studio —
+no separate terminals or browser. `Ctrl`+scroll / `Ctrl ±` / `Ctrl 0` zoom the window;
+closing it stops the child processes. Needs `uv` and `pnpm` on `PATH`.
+
 ## Profile & port selection
 
 Data comes **only from a real detector** (serial / USB-CDC) — the synthetic mode was
@@ -274,11 +280,33 @@ Two modes (switch at the top):
   settling time ±2%, overshoot); biquad cascades use an exact analytic transfer-function
   response. Theory mode — no source data needed.
 
+### 7. Firmware — USB flashing
+
+Update the detector's firmware over USB without an external programmer. The tab calls
+`dfu-programmer` (must be on `PATH`) to flash a `.hex` onto a device sitting in its **DFU
+bootloader**, then resets it back to the application.
+
+- **.hex path** — type it or use **Browse…** (a host-disk file picker; defaults to the
+  configured build-output path via `METAL_LAB_FLASH_HEX`).
+- **device already in bootloader (manual)** — on by default. Leave it checked when you have
+  put the device into the bootloader yourself; the studio then skips the "magic reboot" and
+  flashes directly. (Unchecked = auto mode: send a reboot command over the serial link first —
+  only works if the firmware listens for it.)
+- **Flash** — starts the job; a **state** badge, **progress** bar and a scrolling **log**
+  show what the programmer is doing. On success it resets into the app and telemetry resumes.
+  **Clear** wipes the screen for the next run.
+
+> **Bootloader prerequisite.** Flashing over USB needs a DFU bootloader already on the chip
+> (flashed once with a hardware programmer) and a host-side `dfu-programmer` (plus its WinUSB
+> driver on Windows — install it with Zadig on the bootloader's USB device). Without a
+> bootloader the studio cannot program a blank chip. Firmware/bootloader setup is detector-
+> specific and lives in the firmware repo, not here.
+
 ## Keyboard shortcuts
 
 (Inactive while the cursor is in a form field.)
 
-- **1 … 6** — switch tab (hodograph / I/Q phase / oscilloscope / FFT / ADC scope / DSP).
+- **1 … 7** — switch tab (hodograph / I/Q phase / oscilloscope / FFT / ADC scope / DSP / Firmware).
 - **Enter** / **Z** — zero the hodograph (studio zero = current raw vector).
 - **Space** — run/hold (oscilloscope) or play/stop (DSP recorder), per the active tab.
 
