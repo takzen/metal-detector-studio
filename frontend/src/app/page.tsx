@@ -22,6 +22,7 @@ import { Recorder, type RecChannel } from "@/components/Recorder";
 import { Scope } from "@/components/Scope";
 import { SourceControls } from "@/components/SourceControls";
 import { RecordingControls } from "@/components/RecordingControls";
+import { FirmwarePanel } from "@/components/FirmwarePanel";
 import { Spectrum } from "@/components/Spectrum";
 import { AdcSpectrum } from "@/components/AdcSpectrum";
 import { useSwingPhase } from "@/lib/useSwingPhase";
@@ -43,7 +44,7 @@ const ENBW: Record<WindowType, number> = { rect: 1.0, hann: 1.5, hamming: 1.36, 
 const THRESHOLD_DAC_FULL = 4000 / 3;
 const thresholdMenu = (dac: number) => Math.round((dac * 200) / THRESHOLD_DAC_FULL);
 
-type TabId = "hodograph" | "phase" | "scope" | "fft" | "adc" | "dsp";
+type TabId = "hodograph" | "phase" | "scope" | "fft" | "adc" | "dsp" | "firmware";
 const TABS: { id: TabId; label: string }[] = [
   { id: "hodograph", label: "XY hodograph" },
   { id: "phase", label: "I/Q phase" },
@@ -51,6 +52,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "fft", label: "Live FFT" },
   { id: "adc", label: "ADC scope" },
   { id: "dsp", label: "DSP" },
+  { id: "firmware", label: "Firmware" },
 ];
 
 function StatusDot({ status }: { status: ConnStatus }) {
@@ -1352,6 +1354,8 @@ export default function Home() {
             )}
           </Card>
         )}
+
+        {tab === "firmware" && <FirmwarePanel />}
 
       </section>
     </main>

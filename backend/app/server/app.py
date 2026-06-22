@@ -26,7 +26,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ValidationError
 
+from pathlib import Path
+
 from .. import config
+from ..flash import DfuProgrammer, FlashJob
 from ..frame_validation import FrameValidator
 from ..profiles import list_profiles, load_profile, load_schema
 from ..recording import Recorder
@@ -51,6 +54,16 @@ class SourceRequest(BaseModel):
 
 class RecordRequest(BaseModel):
     action: Literal["start", "stop"]
+
+
+class FlashRequest(BaseModel):
+    hex_path: str | None = None  # absolute or relative to cwd; defaults to config
+    manual: bool = False  # device already in bootloader → skip magic reboot
+    device: str | None = None  # dfu-programmer chip name (defaults to config)
+    programmer: str | None = None  # programmer binary (defaults to config)
+    command_template: str | None = None
+    reset_template: str | None = None
+    magic: str | None = None  # magic reboot bytes (latin-1), defaults to config
 
 
 def _emit(app: FastAPI, text: str) -> None:
@@ -123,6 +136,60 @@ def _recording_feature_csv(path) -> tuple[str, int]:
     return buf.getvalue(), len(feats)
 
 
+async def _pause_source(app: FastAPI) -> None:
+    """Stop the active pump and release the source (frees the COM port for flashing)."""
+    async with app.state.switch_lock:
+        pump = getattr(app.state, "pump", None)
+        source = getattr(app.state, "source", None)
+        if pump is not None:
+            pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pump
+            app.state.pump = None
+        if source is not None:
+            await source.aclose()
+            app.state.source = None
+
+
+async def _resume_source(app: FastAPI) -> None:
+    """Recreate the serial source with the last-known parameters (after flashing)."""
+    await _start_source(
+        app,
+        source_kind=app.state.source_kind,
+        profile_id=app.state.profile.id,
+        port=app.state.port,
+        baud=app.state.baud,
+    )
+
+
+def _build_flash_job(app: FastAPI, req: FlashRequest) -> FlashJob:
+    """Assemble a FlashJob from the request, falling back to config placeholders."""
+    hex_str = req.hex_path or config.FLASH_HEX_DEFAULT
+    hex_path = Path(hex_str).expanduser()
+    if not hex_path.is_file():
+        raise HTTPException(400, f"hex file not found: {hex_path}")
+
+    backend = DfuProgrammer(
+        programmer=req.programmer or config.FLASH_PROGRAMMER,
+        device=req.device or config.FLASH_DEVICE,
+        command_template=req.command_template or config.FLASH_COMMAND_TEMPLATE,
+        reset_template=req.reset_template or config.FLASH_RESET_TEMPLATE,
+    )
+    magic = (req.magic or config.FLASH_MAGIC_REBOOT).encode("latin-1")
+    return FlashJob(
+        backend=backend,
+        hex_path=hex_path,
+        port=app.state.port,
+        baud=app.state.baud,
+        magic=magic,
+        manual=req.manual,
+        stop_source=lambda: _pause_source(app),
+        start_source=lambda: _resume_source(app),
+        reboot_timeout=config.FLASH_REBOOT_TIMEOUT,
+        port_back_timeout=config.FLASH_PORT_BACK_TIMEOUT,
+    )
+
+
 async def _pump(app: FastAPI, source: TelemetrySource) -> None:
     """Drain the given source and broadcast every frame as NDJSON-ready text."""
     try:
@@ -180,6 +247,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.hub = Hub()
     app.state.switch_lock = asyncio.Lock()
     app.state.recorder = None
+    app.state.flash_job = None
     app.state.frame_validator = FrameValidator(load_schema())
     await _start_source(
         app,
@@ -194,10 +262,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if app.state.recorder is not None:
             app.state.recorder.close()
             app.state.recorder = None
-        app.state.pump.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await app.state.pump
-        await app.state.source.aclose()
+        job: FlashJob | None = getattr(app.state, "flash_job", None)
+        if job is not None and job.status()["running"]:
+            job.cancel()
+        # pump/source may be None if a flash paused the source mid-shutdown
+        pump = getattr(app.state, "pump", None)
+        if pump is not None:
+            pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pump
+        source = getattr(app.state, "source", None)
+        if source is not None:
+            await source.aclose()
 
 
 def create_app() -> FastAPI:
@@ -355,6 +431,76 @@ def create_app() -> FastAPI:
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{path.stem}.csv"'},
         )
+
+    @app.get("/api/flash/browse")
+    async def flash_browse(dir: str | None = None) -> dict:
+        """List subdirectories + .hex files on the host disk so the UI can browse to a
+        firmware file. The backend runs locally, so this is the user's own filesystem
+        (the browser can't expose full paths). Defaults to the folder of the configured
+        default .hex if it exists, else the user's home."""
+        if dir:
+            base = Path(dir).expanduser()
+        else:
+            default_dir = Path(config.FLASH_HEX_DEFAULT).expanduser().parent
+            base = default_dir if default_dir.is_dir() else Path.home()
+        base = base.resolve()
+        if not base.is_dir():
+            raise HTTPException(404, f"not a directory: {base}")
+        dirs, hexes = [], []
+        try:
+            for p in sorted(base.iterdir(), key=lambda x: x.name.lower()):
+                if p.is_dir():
+                    dirs.append({"name": p.name, "path": str(p)})
+                elif p.suffix.lower() == ".hex":
+                    hexes.append({"name": p.name, "path": str(p), "bytes": p.stat().st_size})
+        except PermissionError:
+            raise HTTPException(403, f"permission denied: {base}")
+        parent = str(base.parent) if base.parent != base else None
+        return {"dir": str(base), "parent": parent, "dirs": dirs, "hex_files": hexes}
+
+    @app.get("/api/flash/config")
+    async def flash_config() -> dict:
+        """Defaults for prefilling the UI + whether the programmer is on PATH."""
+        backend = DfuProgrammer(
+            programmer=config.FLASH_PROGRAMMER,
+            device=config.FLASH_DEVICE,
+            command_template=config.FLASH_COMMAND_TEMPLATE,
+            reset_template=config.FLASH_RESET_TEMPLATE,
+        )
+        return {
+            "hex_path": config.FLASH_HEX_DEFAULT,
+            "device": config.FLASH_DEVICE,
+            "programmer": config.FLASH_PROGRAMMER,
+            "programmer_available": backend.available(),
+        }
+
+    @app.post("/api/flash")
+    async def flash(req: FlashRequest) -> dict:
+        job: FlashJob | None = getattr(app.state, "flash_job", None)
+        if job is not None and job.status()["running"]:
+            raise HTTPException(409, "a flash job is already running")
+        if app.state.source_kind != "serial":
+            raise HTTPException(409, "flashing requires the serial source (not replay)")
+        job = _build_flash_job(app, req)
+        app.state.flash_job = job
+        job.start()
+        log.info("flash started -> %s (manual=%s)", job.hex_path, job.manual)
+        return job.status()
+
+    @app.get("/api/flash")
+    async def flash_status() -> dict:
+        job: FlashJob | None = getattr(app.state, "flash_job", None)
+        return job.status() if job else {"state": "idle", "running": False, "log": []}
+
+    @app.post("/api/flash/cancel")
+    async def flash_cancel() -> dict:
+        # Idempotent: cancelling when nothing is running is a harmless no-op, not an
+        # error (avoids a scary "error" in the UI if you click cancel after it finished).
+        job: FlashJob | None = getattr(app.state, "flash_job", None)
+        if job is None or not job.status()["running"]:
+            return {"ok": True, "note": "no flash job running"}
+        job.cancel()
+        return {"ok": True}
 
     @app.websocket("/ws/telemetry")
     async def ws_telemetry(websocket: WebSocket) -> None:

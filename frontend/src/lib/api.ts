@@ -54,6 +54,47 @@ export interface RecordStatus {
   elapsed_s?: number;
 }
 
+/** Defaults for the firmware-flash panel (prefill + programmer readiness). */
+export interface FlashConfig {
+  hex_path: string;
+  device: string;
+  programmer: string;
+  programmer_available: boolean;
+}
+
+/** Live state of a firmware-flash job (polled while running). */
+export interface FlashStatus {
+  state: string; // idle | rebooting | waiting_bootloader | flashing | resetting | done | error
+  progress?: number; // 0..1
+  log: string[];
+  error?: string | null;
+  started?: number;
+  hex_path?: string;
+  manual?: boolean;
+  running: boolean;
+}
+
+/** Request body for POST /api/flash (all optional — backend fills from config). */
+export interface FlashRequest {
+  hex_path?: string;
+  manual?: boolean;
+}
+
+/** One entry in the host-side file browser. */
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  bytes?: number;
+}
+
+/** A directory listing from the host disk (subdirs + .hex files). */
+export interface BrowseResult {
+  dir: string;
+  parent: string | null;
+  dirs: BrowseEntry[];
+  hex_files: BrowseEntry[];
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${HTTP_BASE}${path}`);
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
@@ -86,6 +127,13 @@ export const getRecordings = () => getJson<{ recordings: Recording[] }>("/api/re
 export const getRecordStatus = () => getJson<RecordStatus>("/api/record");
 export const startRecord = () => postJson("/api/record", { action: "start" });
 export const stopRecord = () => postJson("/api/record", { action: "stop" });
+
+export const browseHex = (dir?: string) =>
+  getJson<BrowseResult>(`/api/flash/browse${dir ? `?dir=${encodeURIComponent(dir)}` : ""}`);
+export const getFlashConfig = () => getJson<FlashConfig>("/api/flash/config");
+export const getFlashStatus = () => getJson<FlashStatus>("/api/flash");
+export const startFlash = (body: FlashRequest) => postJson("/api/flash", body);
+export const cancelFlash = () => postJson("/api/flash/cancel", {});
 
 export async function deleteRecording(name: string): Promise<void> {
   const res = await fetch(`${HTTP_BASE}/api/recordings/${encodeURIComponent(name)}`, {
