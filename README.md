@@ -117,8 +117,13 @@ flowchart TD
 - **Consistent, persistent UI:** controls are grouped into clearly-labelled clusters
   (parameter label vs. clickable choice), and UI settings (active tab, scope timebase,
   trigger, FFT span/window/dB/avg/view, recorder window/channels, hodograph offset/EMA)
-  persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`6` tabs, `Enter`/`Z`
+  persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`8` tabs, `Enter`/`Z`
   zero, `Space` run/hold), per-chart fullscreen (`⛶`) and PNG / CSV export.
+- **TX bench (transmitter design):** a **TX bench** tab to size the transmitter coil drive —
+  enter the real coil (inductance, DC resistance), the bridge supply and an optional series
+  cap, and it draws the full complementary **H-bridge** and computes the coil current
+  (**pk-pk / peak / RMS**, per-harmonic table) from the actual switched ±Vbus waveform, plus
+  Q, `Vbus/R` ceiling and coil heating — a client-side sizing aid for the Spectral bridge.
 - **USB firmware flashing:** update the detector's firmware over USB straight from the
   **Firmware** tab — pick a `.hex` (with a host-disk file browser), one-click flash with a
   live progress bar, state badge and programmer log, then it resets back to the app and
@@ -126,9 +131,11 @@ flowchart TD
   backend adapter; a **manual** mode flashes a device already held in its bootloader (no
   Atmel-ICE / IDE needed). See [`MANUAL.md`](MANUAL.md) for the bootloader setup.
 - **Desktop app (one click):** an **Electron** shell launches the whole stack from a single
-  icon — it starts the backend (uvicorn) and frontend, reuses them if already running, and
-  opens the studio in a native window (no separate terminals, no browser tab). `Ctrl`+scroll
-  / `Ctrl ±` / `Ctrl 0` zoom; closing the window stops everything.
+  icon — it starts the backend (uvicorn) and frontend, verifies/reuses a running instance,
+  and **picks free ports** (loading whatever port the dev server actually bound) so it
+  coexists with other projects' dev servers, then opens the studio in a native window (no
+  separate terminals, no browser tab). Orphaned dev servers are cleaned up on quit and at the
+  next start. `Ctrl`+scroll / `Ctrl ±` / `Ctrl 0` zoom; closing the window stops everything.
 - **AI-Agent Ready (Anthropic MCP):** an MCP server exposes live telemetry as tools for
   coding assistants (read frames, analyze phase/spectrum, push config) and **controls
   recording / replay** (start/stop, list, replay, go-live, delete, export CSV).
@@ -193,13 +200,14 @@ Talks to real detector hardware over USB-CDC; each device is described by a JSON
 | --- | --- |
 | Telemetry contract (`schema.json` + profiles) | ✅ |
 | Backend: FastAPI + WebSocket + serial (USB-CDC) source | ✅ |
-| Frontend: dashboard (hodograph · I/Q phase · oscilloscope · FFT · ADC scope · DSP) | ✅ |
+| Frontend: dashboard (hodograph · I/Q phase · oscilloscope · FFT · ADC scope · DSP · TX bench) | ✅ |
 | Live profile/port switching from the UI | ✅ |
 | Session record + replay (file, all tabs + MCP) | ✅ |
 | Data export (PNG · CSV · recording→CSV) | ✅ |
 | Frame validation vs `schema.json` (jsonschema) | ✅ |
 | USB firmware flashing (DFU, Firmware tab + backend) | ✅ |
-| Desktop app (Electron one-click launcher) | ✅ |
+| Desktop app (Electron one-click launcher, dynamic ports) | ✅ |
+| TX bench (coil-current calculator + H-bridge schematic) | ✅ |
 | MCP server (telemetry as AI tools + recording control) | ✅ |
 | Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
 | Config back to MCU over serial | 🚧 needs firmware command input |

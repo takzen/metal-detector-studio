@@ -23,6 +23,7 @@ import { Scope } from "@/components/Scope";
 import { SourceControls } from "@/components/SourceControls";
 import { RecordingControls } from "@/components/RecordingControls";
 import { FirmwarePanel } from "@/components/FirmwarePanel";
+import { CoilLab } from "@/components/CoilLab";
 import { Spectrum } from "@/components/Spectrum";
 import { AdcSpectrum } from "@/components/AdcSpectrum";
 import { useSwingPhase } from "@/lib/useSwingPhase";
@@ -31,7 +32,7 @@ import { usePersistentState } from "@/lib/usePersistentState";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 
 const DEG = 180 / Math.PI;
-const VERSION = "v0.11.0-beta";
+const VERSION = "v0.12.0-beta";
 const fmt = (n: number, d = 1) => n.toFixed(d);
 const clamp180 = (d: number) => Math.max(-180, Math.min(180, d));
 const wrap180 = (d: number) => ((((d + 180) % 360) + 360) % 360) - 180;
@@ -44,7 +45,7 @@ const ENBW: Record<WindowType, number> = { rect: 1.0, hann: 1.5, hamming: 1.36, 
 const THRESHOLD_DAC_FULL = 4000 / 3;
 const thresholdMenu = (dac: number) => Math.round((dac * 200) / THRESHOLD_DAC_FULL);
 
-type TabId = "hodograph" | "phase" | "scope" | "fft" | "adc" | "dsp" | "firmware";
+type TabId = "hodograph" | "phase" | "scope" | "fft" | "adc" | "dsp" | "firmware" | "coil";
 const TABS: { id: TabId; label: string }[] = [
   { id: "hodograph", label: "XY hodograph" },
   { id: "phase", label: "I/Q phase" },
@@ -53,6 +54,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "adc", label: "ADC scope" },
   { id: "dsp", label: "DSP" },
   { id: "firmware", label: "Firmware" },
+  { id: "coil", label: "TX bench" },
 ];
 
 function StatusDot({ status }: { status: ConnStatus }) {
@@ -1356,6 +1358,8 @@ export default function Home() {
         )}
 
         {tab === "firmware" && <FirmwarePanel />}
+
+        {tab === "coil" && <CoilLab harmonics={profile?.harmonics} />}
 
       </section>
     </main>

@@ -65,3 +65,5 @@ backend/recordings/
 # build dir above — re-include it so it is tracked.
 !frontend/src/lib/
 !frontend/src/lib/**
+
+Metal Detector Studio.lnk

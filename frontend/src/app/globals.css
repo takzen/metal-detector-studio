@@ -25,6 +25,29 @@ html {
      tall/short tabs never changes the viewport width (no sideways jump). */
   scrollbar-gutter: stable;
   overflow-y: scroll;
+  /* Dark UI → tell the browser, so native scrollbars (and form controls)
+     render dark instead of the default light theme. */
+  color-scheme: dark;
+}
+
+/* Slim dark scrollbars to match the panel palette (Chromium/WebKit; Firefox
+   uses scrollbar-color). */
+* {
+  scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
 }
 
 body {
