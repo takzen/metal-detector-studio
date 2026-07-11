@@ -196,6 +196,8 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
   const [vbus, setVbus] = usePersistentState("coilVbus", 12); // bridge supply [V]
   const [seriesCuF, setSeriesCuF] = usePersistentState("coilSeriesC", 0); // series cap in the TX path [µF], 0 = none
   const [nTones, setNTones] = usePersistentState("coilTones", 3); // how many tones are driven (1–3)
+  const [measOn, setMeasOn] = usePersistentState("coilMeasOn", false); // overlay measured tone currents
+  const [measI, setMeasI] = usePersistentState<number[]>("coilMeasI", [0, 0, 0]); // measured tone amplitudes [mA]
   const [freqsStored, setFreqs] = usePersistentState<number[]>("coilFreqs", DEFAULT_FREQS);
   // Heal whatever got persisted (missing slots, 0, NaN) back to the Spectral defaults,
   // so the harmonic fields are never empty.
@@ -294,6 +296,17 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
     const z = Math.hypot(rdc, x);
     return { f, xl, z, q: xl / rdc, iAmp: sim?.toneAmp[idx] ?? NaN };
   });
+
+  // Measured-vs-model rows: each active tone's modelled current, the measured amplitude the
+  // user read off the scope FFT (in mA), and the boost = measured/model. That boost is, to
+  // first order, how much the real firmware SHE pattern weights that tone vs the naïve one.
+  const meas = activeFreqs.map((f, idx) => {
+    const model = sim?.toneAmp[idx] ?? NaN;
+    const measured = (measI[idx] ?? 0) / 1000; // A
+    return { f, model, measured, boost: model > 0 && measured > 0 ? measured / model : NaN };
+  });
+  const setMeas = (i: number, mA: number) =>
+    setMeasI(Array.from({ length: 3 }, (_, j) => (j === i ? mA : measI[j] ?? 0)));
 
   const setFreq = (i: number, hz: number) => setFreqs(freqs.map((v, j) => (j === i ? hz : v)));
   const loadProfileFreqs = () => {
@@ -441,6 +454,62 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
               </div>
             </>
           )}
+
+          {/* Measured-vs-model overlay — close the loop with a scope FFT of the shunt. */}
+          <div className="mt-4 border-t border-border pt-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-[10px] uppercase tracking-wide text-muted">measured vs model (scope FFT)</h3>
+              <button
+                onClick={() => setMeasOn((v) => !v)}
+                className="rounded-md border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:text-foreground"
+              >
+                {measOn ? "hide" : "enter measured"}
+              </button>
+            </div>
+            {measOn && (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[420px] text-sm">
+                    <thead>
+                      <tr className="text-[10px] uppercase tracking-wide text-muted">
+                        <th className="py-1 text-left font-semibold">Tone</th>
+                        <th className="py-1 text-right font-semibold">model I</th>
+                        <th className="py-1 text-right font-semibold">measured [mA]</th>
+                        <th className="py-1 text-right font-semibold">boost</th>
+                      </tr>
+                    </thead>
+                    <tbody className="font-mono tabular-nums">
+                      {meas.map((m, i) => (
+                        <tr key={i} className="border-t border-border">
+                          <td className="py-1.5 text-left text-foreground">{(m.f / 1000).toFixed(3)} kHz</td>
+                          <td className="py-1.5 text-right text-muted">{fmtA(m.model)}</td>
+                          <td className="py-1.5 text-right">
+                            <input
+                              type="number"
+                              value={measI[i] ?? 0}
+                              min={0}
+                              step={5}
+                              onChange={(e) => setMeas(i, Number(e.target.value))}
+                              className="w-20 rounded border border-border bg-background px-2 py-0.5 text-right font-mono text-sm tabular-nums text-foreground outline-none"
+                            />
+                          </td>
+                          <td className={`py-1.5 text-right ${isFinite(m.boost) ? "text-accent" : "text-muted"}`}>
+                            {isFinite(m.boost) ? `${m.boost.toFixed(2)}×` : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs text-muted">
+                  Enter each tone&apos;s current amplitude from a scope FFT of the shunt (0.1 Ω → 100 mV/A;
+                  Blackman window, long record). <b className="text-foreground">boost</b> = measured ÷ naïve
+                  model — how much the real firmware SHE pattern weights that tone. All ≈ 1× → the drive is
+                  the plain pattern; higher on the top tones → it boosts them (Equinox-style).
+                </p>
+              </>
+            )}
+          </div>
 
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 border-t border-border pt-3">
             <Readout label="ceiling Vbus/R" value={fmtA(idc)} />

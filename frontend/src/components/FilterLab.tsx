@@ -17,6 +17,21 @@ const M = 512; // impulse-response length (samples)
 const Q29 = 2 ** 29;
 const Q15 = 2 ** 15;
 
+// mode_dynamic.c REACT_ALPHA[9] (Q15): the DISC band-pass stage-2 lower-edge alpha for
+// REACT 1..9. Since 2026-07 the lower edge is set by this alpha table (ema_a) instead of
+// an integer shift — half-octave steps (×~1.41), where the odd positions == the old
+// shifts 10..6. react 3 (α=64 = 1/2^9, ~0.31 Hz) is the default.
+const REACT_ALPHA = [32, 45, 64, 91, 128, 181, 256, 362, 512];
+const REACT_DEFAULT = 3; // react 3 = α 64 = shift9
+
+// DIDX (mode_dynamic_idx.c) — the "fast / pro" channel. The Classic III biquad cascade was
+// REJECTED in firmware; DIDX now = input LPF Butterworth 35 Hz (Q29) → band-pass
+// 2·(EMA αHi − EMA αLo) with BOTH edges set from REACT tables, then half-wave rectified.
+// REACT 1..9 slides the band centre 5..12.5 Hz (XP-like); band = f0/2 .. 2·f0.
+const BPX_LPF = { b0: 5600859, b1: 11201719, b2: 5600859, a1: -907846767, a2: 393379292 };
+const DIDX_ALPHA_HI = [1996, 2229, 2489, 2778, 3099, 3454, 3848, 4283, 4763]; // upper edge, react 1..9
+const DIDX_ALPHA_LO = [511, 572, 641, 718, 804, 900, 1008, 1128, 1262]; // lower edge, react 1..9
+
 // Real DISC low-pass biquad coefficients (Q29) from mode_dynamic.c BP_LPF[]
 // (Butterworth 2nd-order, lowered 14 Hz → 10 Hz).
 const DISC_BIQUAD = { b0: 507178, b1: 1014355, b2: 507178, a1: -1026066113, a2: 491223911 };
@@ -52,7 +67,7 @@ const DEEP_SAT_ALPHA = [
   3, 4, 5, 7, 9, 12, 15, 20, 26, 34, 45, 59, 77, 101, 133, 174, 228, 298, 391, 512,
 ]; // mode_static.c (DEEP SAT high-pass tracker)
 
-type Kind = "ema" | "lp2" | "bp" | "biquad" | "biqN" | "sat" | "box" | "discband";
+type Kind = "ema" | "lp2" | "bp" | "bpa" | "biquad" | "biqN" | "sat" | "box" | "discband" | "didxband";
 
 function emaImpulse(a: number): number[] {
   const h = new Array<number>(M);
@@ -141,19 +156,38 @@ function boxImpulse(n: number): number[] {
 // signal (mode_dynamic.c DYN_BP_SHIFT1/2). LINEAR approximation — the real DISC
 // path half-wave rectifies the band-pass output (one hump per target), so this
 // shows the passband shape, not the exact non-linear motion response.
-function discBandImpulse(): number[] {
+function discBandImpulse(aLo: number): number[] {
   const { b0, b1, b2, a1, a2 } = DISC_BIQUAD;
   const nb0 = b0 / Q29, nb1 = b1 / Q29, nb2 = b2 / Q29, na1 = a1 / Q29, na2 = a2 / Q29;
   let x1 = 0, x2 = 0, y1 = 0, y2 = 0; // input LPF biquad (10 Hz)
   let s1 = 0, s2 = 0; // band-pass EMA pair
-  const aUp = 1 / 2 ** 4; // DYN_BP_SHIFT1 — upper edge ~10 Hz
-  const aLo = 1 / 2 ** 9; // DYN_BP_SHIFT2 — lower edge (REACT default)
+  const aUp = 1 / 2 ** 4; // DYN_BP_SHIFT1 — upper edge ~10 Hz (aLo = REACT alpha, lower edge)
   const h = new Array<number>(M);
   for (let n = 0; n < M; n++) {
     const x = n === 0 ? 1 : 0;
     const yb = nb0 * x + nb1 * x1 + nb2 * x2 - na1 * y1 - na2 * y2; // LPF 10 Hz
     x2 = x1; x1 = x; y2 = y1; y1 = yb;
     s1 += aUp * (yb - s1); // band-pass pair on the LPF output
+    h[n] = 2 * (s1 - s2);
+    s2 += aLo * (s1 - s2);
+  }
+  return h;
+}
+
+// DIDX effective motion band (mode_dynamic_idx.c): input LPF Butterworth 35 Hz (BPX_LPF)
+// cascaded with the band-pass pair 2·(EMA aHi − EMA aLo), BOTH edges from the REACT tables
+// (DIDX_ALPHA_HI/LO). LINEAR approximation — the real path half-wave rectifies the output.
+function didxBandImpulse(aHi: number, aLo: number): number[] {
+  const { b0, b1, b2, a1, a2 } = BPX_LPF;
+  const nb0 = b0 / Q29, nb1 = b1 / Q29, nb2 = b2 / Q29, na1 = a1 / Q29, na2 = a2 / Q29;
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0; // input LPF biquad (35 Hz)
+  let s1 = 0, s2 = 0; // band-pass EMA pair (aHi = upper edge, aLo = lower edge)
+  const h = new Array<number>(M);
+  for (let n = 0; n < M; n++) {
+    const x = n === 0 ? 1 : 0;
+    const yb = nb0 * x + nb1 * x1 + nb2 * x2 - na1 * y1 - na2 * y2; // LPF 35 Hz
+    x2 = x1; x1 = x; y2 = y1; y1 = yb;
+    s1 += aHi * (yb - s1);
     h[n] = 2 * (s1 - s2);
     s2 += aLo * (s1 - s2);
   }
@@ -276,6 +310,7 @@ type Preset = {
   sat?: number;
   satTable?: SatTable;
   win?: number;
+  react?: number; // for kind "bpa" / "discband": DISC REACT 1..9 → REACT_ALPHA stage-2
   stages?: BiqStage[]; // for kind "biqN": the cascade's Q15 biquad stages
   hp?: boolean; // firmware applies this tracker as `signal − EMA` = high-pass
   note: string;
@@ -286,10 +321,11 @@ type Preset = {
 const TAKTYK_PRESETS: Preset[] = [
   { id: "deeplp", label: "DEEP/PIN/PROS LP", kind: "lp2", shift1: 5, note: "DEEP/PROS/PIN: 2-pole EMA cascade, shift 5 — anti-noise low-pass ~3.2 Hz" },
   { id: "disc", label: "DISC LP", kind: "biquad", note: "DISC: 2nd-order Butterworth biquad (Q29 BP_LPF), −3 dB ≈ 10 Hz (lowered from 14 Hz — anti-noise + 50 Hz reject)" },
-  { id: "discband", label: "DISC motion band", kind: "discband", note: "DISC effective motion band: biquad LP 10 Hz → band-pass 2·(EMA shift4 − EMA shift9). Linear approx — real path half-wave rectifies the band-pass output." },
-  { id: "discbp", label: "DISC band-pass", kind: "bp", shift1: 4, shift2: 9, note: "DISC motion band-pass pair 2·(EMA s1 − EMA s2): s1 shift4 (~10 Hz upper edge), s2 shift9 (lower edge). REACT 1..5 sets s2 = 11−react. Real poles → does not ring." },
+  { id: "discband", label: "DISC motion band", kind: "discband", react: REACT_DEFAULT, note: "DISC effective motion band: biquad LP 10 Hz → band-pass 2·(EMA shift4 − EMA α_react). Linear approx — real path half-wave rectifies the band-pass output. Lower edge follows REACT (default react 3 ≈ 0.31 Hz)." },
+  { id: "discbp", label: "DISC band-pass", kind: "bpa", shift1: 4, react: REACT_DEFAULT, note: "DISC motion band-pass pair 2·(EMA s1 − EMA s2): s1 shift4 (~10 Hz upper edge), s2 = REACT alpha (Q15). Since 2026-07 REACT is 1..9 (half-octave, ema_a) — react 3 = α64 ≈ 0.31 Hz (default), react 9 = α512 ≈ 2.5 Hz (separation); odd positions == old shifts 10..6. Real poles → does not ring." },
   { id: "discbase", label: "DISC baseline", kind: "ema", shift1: 11, note: "DISC ground baseline EMA shift11 (~0.08 Hz). Firmware applies it as l − EMA = high-pass → use the 'response: high-pass' toggle." },
-  { id: "didx", label: "DISC-IDX band", kind: "biqN", stages: SBX_CLASSIC3_2, note: "DISC-IDX test channel: 2-stage Q15 biquad cascade — digital clone of White's Classic III analog motion filter. Peak 7.2 Hz, +42.7 dB, −3 dB ≈ 4–13 Hz @ 1 kHz. Resonant (rings), unlike the DISC real-pole band-pass." },
+  { id: "psstat", label: "PSEUDO LP", kind: "ema", shift1: 8, note: "PSEUDOSTATIC signal LP: 1-pole EMA shift8 (~0.62 Hz, ~128 ms). Its AUTO ground tracker is EMA shift11 (~1 s), applied as high-pass — same as DISC baseline." },
+  { id: "didx", label: "DISC-IDX (DIDX)", kind: "didxband", react: REACT_DEFAULT, note: "DISC-IDX (DIDX) fast/pro channel: input LPF 35 Hz → band-pass 2·(EMA αHi − EMA αLo), BOTH edges from REACT tables (DIDX_ALPHA_HI/LO). REACT 1..9 slides the band centre 5..12.5 Hz (XP-like, ×1.12/step); band = f0/2..2·f0. Half-wave rectified (linear approx here). Replaced the REJECTED Classic III biquad cascade — see sandbox for that." },
   { id: "ground", label: "ground track", kind: "ema", shift1: 9, note: "ground tracker EMA shift9 (~0.31 Hz). Applied as in − EMA = high-pass." },
   { id: "pinavg", label: "PIN average", kind: "ema", shift1: 8, note: "pinpoint baseline EMA shift8 (~0.62 Hz). Applied as raw − EMA = high-pass." },
   { id: "deepsat", label: "DEEP SAT", kind: "sat", satTable: "deep", sat: 10, note: "DEEP SAT noise/baseline tracker EMA_α (SAT_ALPHA); level sets α. Applied as static_mag − EMA_α = high-pass auto-zero." },
@@ -309,7 +345,7 @@ const MXT_PRESETS: Preset[] = [
 
 // filters_sandbox/*.c — experimental cascades, PREVIEW ONLY (not wired into firmware).
 const SANDBOX_PRESETS: Preset[] = [
-  { id: "sbx2", label: "Classic III ×2", kind: "biqN", stages: SBX_CLASSIC3_2, note: "biquad_1_2stage.c — 2-stage Classic III motion clone, peak 7.2 Hz, +42.7 dB. Same as DISC-IDX/DIDX." },
+  { id: "sbx2", label: "Classic III ×2", kind: "biqN", stages: SBX_CLASSIC3_2, note: "biquad_1_2stage.c — 2-stage Classic III motion clone, peak 7.2 Hz, +42.7 dB. Was the DIDX candidate; REJECTED in firmware (rings / group delay put the beep behind the coil) → DIDX now uses the REACT EMA band-pass." },
   { id: "sbx3", label: "Classic III ×3", kind: "biqN", stages: SBX_CLASSIC3_3, note: "biquad_1_3stage.c — 3-stage version (3rd stage = 2nd): steeper skirts, higher gain/Q than the ×2." },
   { id: "sbxg60", label: "Neila 7 Hz +60 dB", kind: "biqN", stages: SBX_NEILA_7HZ_G60, note: "biquad_3_neila_7hz_gain60.c — 3× resonant biquad centred 7 Hz, ≈+60 dB. Per-stage poles 0.975/0.984/0.991 (very high Q)." },
   { id: "sbx0", label: "Neila 7 Hz 0 dB", kind: "biqN", stages: SBX_NEILA_7HZ_0DB, note: "biquad_3_nelia_7hz.c — same 3-pole 7 Hz design scaled to ≈0 dB net gain (numerators /10 vs the +60 dB build)." },
@@ -346,6 +382,7 @@ export function FilterLab() {
   const [satLevel, setSatLevel] = useState(10); // 1..20
   const [satTable, setSatTable] = useState<SatTable>("pros");
   const [winN, setWinN] = useState(5); // boxcar window (MXT SAT env)
+  const [react, setReact] = useState(REACT_DEFAULT); // DISC band-pass REACT 1..9 (stage-2 alpha)
   const [resp, setResp] = useState<"lp" | "hp">("lp"); // show EMA as low-pass or its high-pass complement
   const [stage, setStage] = useState<number>(0); // cascade filters: 0 = full cascade, k = stage k alone
   const [stages, setStages] = useState<BiqStage[]>(SBX_CLASSIC3_2); // active biqN cascade
@@ -365,6 +402,7 @@ export function FilterLab() {
     if (p.sat != null) setSatLevel(p.sat);
     if (p.satTable != null) setSatTable(p.satTable);
     if (p.win != null) setWinN(p.win);
+    if (p.react != null) setReact(p.react);
     if (p.stages != null) setStages(p.stages);
     setResp(p.hp ? "hp" : "lp");
     setStage(0); // start each preset at the full cascade
@@ -384,6 +422,7 @@ export function FilterLab() {
   const onSatTable = (t: SatTable) => setSatTable(t);
   const bumpSat = (d: number) => setSatLevel((s) => Math.min(20, Math.max(1, s + d)));
   const bumpWin = (d: number) => setWinN((s) => Math.min(32, Math.max(2, s + d)));
+  const bumpReact = (d: number) => setReact((r) => Math.min(9, Math.max(1, r + d)));
   const onResp = (r: "lp" | "hp") => setResp(r);
 
   const { impInData, impData, frData, band3Label, settlingMs, overshootPct, coeffText } = useMemo(() => {
@@ -399,12 +438,18 @@ export function FilterLab() {
     } else if (kind === "lp2") {
       h = stage === 1 ? emaImpulse(a1) : lp2Impulse(a1);
       coeff = `${stage === 1 ? "stage 1 — 1× EMA" : "cascade — 2× EMA"}, α = 1/2^${shift1} = ${a1.toFixed(4)}`;
-    } else if (kind === "bp") {
-      h = stage === 1 ? emaImpulse(a1) : bpImpulse(a1, a2);
+    } else if (kind === "bp" || kind === "bpa") {
+      // MXT band-pass (bp): stage2 = integer shift2. DISC band-pass (bpa): stage2 = REACT
+      // alpha from the Q15 table (ema_a, mode_dynamic.c) — the 2026-07 migration.
+      const aLow = kind === "bpa" ? REACT_ALPHA[react - 1] / Q15 : a2;
+      h = stage === 1 ? emaImpulse(a1) : bpImpulse(a1, aLow);
+      const lowerHz = (aLow * fs) / (2 * Math.PI);
       coeff =
         stage === 1
           ? `stage 1 — EMA s1, α1 = 1/2^${shift1} = ${a1.toFixed(4)}`
-          : `cascade — BP 2·(s1−s2), α1 = 1/2^${shift1}, α2 = 1/2^${shift2}`;
+          : kind === "bpa"
+            ? `cascade — BP 2·(s1−s2), α1 = 1/2^${shift1}, react ${react} → α2 = ${REACT_ALPHA[react - 1]}/32768 (~${lowerHz.toFixed(2)} Hz)`
+            : `cascade — BP 2·(s1−s2), α1 = 1/2^${shift1}, α2 = 1/2^${shift2}`;
     } else if (kind === "sat") {
       h = emaImpulse(satAlpha);
       coeff = `${satTable === "deep" ? "DEEP SAT" : "PROS VSAT"} ${satLevel}: α = ${satRaw}/32768 = ${satAlpha.toFixed(4)}`;
@@ -412,8 +457,15 @@ export function FilterLab() {
       h = boxImpulse(winN);
       coeff = `${winN}-tap moving average (boxcar), 1/${winN} each — MXT SAT env window (real = max-of-${winN})`;
     } else if (kind === "discband") {
-      h = discBandImpulse();
-      coeff = `DISC motion band: biquad LP 10 Hz → band-pass 2·(EMA s4 − EMA s9) — linear, ignores half-wave |.|`;
+      const aLo = REACT_ALPHA[react - 1] / Q15;
+      h = discBandImpulse(aLo);
+      coeff = `DISC motion band: biquad LP 10 Hz → BP 2·(EMA s4 − EMA α_react ${REACT_ALPHA[react - 1]}/32768) — linear, ignores half-wave |.|`;
+    } else if (kind === "didxband") {
+      const aHi = DIDX_ALPHA_HI[react - 1] / Q15;
+      const aLo = DIDX_ALPHA_LO[react - 1] / Q15;
+      h = didxBandImpulse(aHi, aLo);
+      const edge = (al: number) => (-1000 / (2 * Math.PI)) * Math.log(1 - al); // α/Q15 → f_c Hz
+      coeff = `DIDX react ${react}: LPF 35 Hz → BP EMA(αHi ${DIDX_ALPHA_HI[react - 1]}) − EMA(αLo ${DIDX_ALPHA_LO[react - 1]}) ≈ ${edge(aLo).toFixed(1)}–${edge(aHi).toFixed(1)} Hz — linear, ignores half-wave |.|`;
     } else if (kind === "biqN") {
       const single = stage >= 1 && stage <= stages.length;
       h = biqNImpulse(single ? [stages[stage - 1]] : stages);
@@ -478,7 +530,7 @@ export function FilterLab() {
       overshootPct,
       coeffText: coeff,
     };
-  }, [kind, shift1, shift2, satLevel, satTable, winN, resp, stage, stages, fs]);
+  }, [kind, shift1, shift2, satLevel, satTable, winN, react, resp, stage, stages, fs]);
 
   const impInHost = useRef<HTMLDivElement | null>(null);
   const impHost = useRef<HTMLDivElement | null>(null);
@@ -645,9 +697,10 @@ export function FilterLab() {
     }`;
   const lbl = "text-[10px] font-semibold uppercase tracking-wider text-muted";
 
-  const showShift = kind === "ema" || kind === "lp2" || kind === "bp";
-  // Stage toggle: biqN has one button per biquad; lp2/bp expose only stage 1 vs cascade.
-  const stageCount = kind === "biqN" ? stages.length : kind === "lp2" || kind === "bp" ? 1 : 0;
+  const showShift = kind === "ema" || kind === "lp2" || kind === "bp" || kind === "bpa";
+  // Stage toggle: biqN has one button per biquad; lp2/bp/bpa expose only stage 1 vs cascade.
+  const stageCount =
+    kind === "biqN" ? stages.length : kind === "lp2" || kind === "bp" || kind === "bpa" ? 1 : 0;
 
   return (
     <div className="flex flex-col gap-3">
@@ -676,9 +729,9 @@ export function FilterLab() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1">
           <span className={lbl}>type</span>
-          {(["ema", "lp2", "bp", "biquad", "biqN", "sat", "box", "discband"] as Kind[]).map((k) => (
+          {(["ema", "lp2", "bp", "bpa", "biquad", "biqN", "sat", "box", "discband", "didxband"] as Kind[]).map((k) => (
             <button key={k} onClick={() => onKind(k)} className={btn(kind === k)}>
-              {k === "lp2" ? "2-pole EMA" : k === "bp" ? "band-pass" : k === "biquad" ? "biquad" : k === "biqN" ? "biquad×N" : k === "box" ? "moving-avg" : k === "discband" ? "DISC-band" : k.toUpperCase()}
+              {k === "lp2" ? "2-pole EMA" : k === "bp" ? "band-pass" : k === "bpa" ? "band-pass α" : k === "biquad" ? "biquad" : k === "biqN" ? "biquad×N" : k === "box" ? "moving-avg" : k === "discband" ? "DISC-band" : k === "didxband" ? "DIDX-band" : k.toUpperCase()}
             </button>
           ))}
         </div>
@@ -712,6 +765,14 @@ export function FilterLab() {
             <button onClick={() => bumpShift2(-1)} className={btn(false)}>−</button>
             <span className="w-6 text-center font-mono text-xs tabular-nums">{shift2}</span>
             <button onClick={() => bumpShift2(1)} className={btn(false)}>+</button>
+          </div>
+        )}
+        {(kind === "bpa" || kind === "discband" || kind === "didxband") && (
+          <div className="flex items-center gap-1">
+            <span className={lbl} title="DISC/DIDX REACT 1..9 → band-pass edge alpha(s)">react</span>
+            <button onClick={() => bumpReact(-1)} className={btn(false)}>−</button>
+            <span className="w-6 text-center font-mono text-xs tabular-nums">{react}</span>
+            <button onClick={() => bumpReact(1)} className={btn(false)}>+</button>
           </div>
         )}
         {kind === "sat" && (
