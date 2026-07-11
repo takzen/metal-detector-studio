@@ -22,6 +22,8 @@ const TYPE_LABEL: Record<CoilType, string> = { dd: "DD", concentric: "Concentric
 
 const fmtOhm = (x: number) => (!isFinite(x) ? "—" : x >= 1 ? `${x.toFixed(2)} Ω` : `${(x * 1000).toFixed(0)} mΩ`);
 const fmtH = (h: number) => (!isFinite(h) ? "—" : h >= 1e-3 ? `${(h * 1e3).toFixed(2)} mH` : `${(h * 1e6).toFixed(0)} µH`);
+const fmtF = (f: number) => (!isFinite(f) || f <= 0 ? "—" : f >= 1e-9 ? `${(f * 1e9).toFixed(1)} nF` : `${(f * 1e12).toFixed(0)} pF`);
+const fmtHz = (hz: number) => (!isFinite(hz) || hz <= 0 ? "—" : hz >= 1e3 ? `${(hz / 1e3).toFixed(2)} kHz` : `${hz.toFixed(0)} Hz`);
 
 // Inductance of an N-turn circular loop of a round conductor bundle (Wheeler):
 // L = μ0·N²·r·[ln(8r/a) − 2], a = bundle radius. Weakly (log) sensitive to a.
@@ -138,10 +140,12 @@ function CoilSvg({ type }: { type: CoilType }) {
 }
 
 function CoilResult({
-  title, accent, c, extra,
+  title, accent, c, w, cParF, extra,
 }: {
-  title: string; accent: boolean; c: ReturnType<typeof coilCalc>; extra?: React.ReactNode;
+  title: string; accent: boolean; c: ReturnType<typeof coilCalc>; w: number; cParF: number; extra?: React.ReactNode;
 }) {
+  void w; // frequency not used for self-resonance (kept for signature symmetry)
+  const fSelf = cParF > 0 && c.L > 0 ? 1 / (TWO_PI * Math.sqrt(c.L * cParF)) : NaN; // self-resonance with C_self
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -166,6 +170,7 @@ function CoilResult({
         <span>wire {isFinite(c.wireLen) ? `${c.wireLen.toFixed(1)} m` : "—"}</span>
         <span>Cu {isFinite(c.massG) ? `${c.massG.toFixed(0)} g` : "—"}</span>
         <span>{(c.dWire * 1000).toFixed(2)} mm · {c.rPerM.toFixed(3)} Ω/m</span>
+        <span>f_self = <span className={cParF > 0 ? "text-accent" : "text-foreground"}>{cParF > 0 ? fmtHz(fSelf) : "— (set C_self)"}</span></span>
       </div>
     </div>
   );
@@ -180,6 +185,7 @@ export function CoilDesigner() {
   const [txAwg, setTxAwg] = usePersistentState("cd_tx_awg", 26);
   const [rxTurns, setRxTurns] = usePersistentState("cd_rx_turns", 60);
   const [rxAwg, setRxAwg] = usePersistentState("cd_rx_awg", 30);
+  const [selfCpF, setSelfCpF] = usePersistentState("cd_selfc_pf", 0); // measured/estimated self-capacitance [pF]
   const [sent, setSent] = useState(false);
 
   const hasRx = type !== "mono";
@@ -211,11 +217,16 @@ export function CoilDesigner() {
       {/* Inputs */}
       <div className="rounded-lg border border-border bg-panel p-4">
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-medium text-muted">Probe geometry &amp; windings</h2>
+          <h2 className="text-sm font-medium text-muted">Coil geometry &amp; windings</h2>
           <InfoPopover title="Coil designer — model">
             <p>
-              A probe has <b>two windings</b>: the <b>TX</b> drive coil and the <b>RX</b> pickup coil — each
-              with its own turns and wire gauge, so each is designed separately here.
+              A coil assembly has <b>two windings</b>: the <b>TX</b> drive coil and the <b>RX</b> pickup coil —
+              each with its own turns and wire gauge, so each is designed separately here.
+            </p>
+            <p>
+              <b>Self C</b> is the winding&apos;s self-capacitance (measured / estimated — there is no reliable
+              formula for it): with it, <code className={CODE_CLS}>f_self = 1/(2π√(L·C))</code> is the
+              self-resonant frequency. Leave 0 if unknown.
             </p>
             <p>
               Inductance = N-turn loop formula{" "}
@@ -250,6 +261,7 @@ export function CoilDesigner() {
           </div>
           <Field label="Outer Ø" value={diaCm} onChange={setDiaCm} unit="cm" step={1} />
           <Field label="Frequency" value={fkHz} onChange={setFkHz} unit="kHz" step={0.1} />
+          <Field label="Self C" value={selfCpF} onChange={setSelfCpF} unit="pF" step={5} w="w-16" />
 
           {/* TX winding */}
           <div className="flex items-end gap-3 rounded-md border border-accent/40 bg-accent/5 px-3 py-2">
@@ -274,7 +286,7 @@ export function CoilDesigner() {
         {/* Drawing */}
         <div className="rounded-lg border border-border bg-panel p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-medium text-muted">{TYPE_LABEL[type]} probe</h2>
+            <h2 className="text-sm font-medium text-muted">{TYPE_LABEL[type]} coil</h2>
             <span className="font-mono text-xs text-muted">Ø {diaCm} cm{hasRx ? ` · TX ${txTurns}t / RX ${rxTurns}t` : ` · ${txTurns}t`}</span>
           </div>
           <CoilSvg type={type} />
@@ -287,6 +299,8 @@ export function CoilDesigner() {
             title="TX coil (drive)"
             accent
             c={tx}
+            w={w}
+            cParF={selfCpF * 1e-12}
             extra={
               <div className="flex items-center gap-2">
                 {sent && <span className="font-mono text-[11px] text-accent">sent — open TX bench</span>}
@@ -299,7 +313,7 @@ export function CoilDesigner() {
           />
           {hasRx && (
             <div className="mt-4 border-t border-border pt-4">
-              <CoilResult title="RX coil (pickup)" accent={false} c={rx} />
+              <CoilResult title="RX coil (pickup)" accent={false} c={rx} w={w} cParF={selfCpF * 1e-12} />
             </div>
           )}
         </div>
