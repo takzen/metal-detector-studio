@@ -24,6 +24,7 @@ import { SourceControls } from "@/components/SourceControls";
 import { RecordingControls } from "@/components/RecordingControls";
 import { FirmwarePanel } from "@/components/FirmwarePanel";
 import { CoilLab } from "@/components/CoilLab";
+import { CoilDesigner } from "@/components/CoilDesigner";
 import { Spectrum } from "@/components/Spectrum";
 import { AdcSpectrum } from "@/components/AdcSpectrum";
 import { useSwingPhase } from "@/lib/useSwingPhase";
@@ -45,7 +46,7 @@ const ENBW: Record<WindowType, number> = { rect: 1.0, hann: 1.5, hamming: 1.36, 
 const THRESHOLD_DAC_FULL = 4000 / 3;
 const thresholdMenu = (dac: number) => Math.round((dac * 200) / THRESHOLD_DAC_FULL);
 
-type TabId = "hodograph" | "phase" | "scope" | "fft" | "adc" | "dsp" | "firmware" | "coil";
+type TabId = "hodograph" | "phase" | "scope" | "fft" | "adc" | "dsp" | "firmware" | "coil" | "design";
 const TABS: { id: TabId; label: string }[] = [
   { id: "hodograph", label: "XY hodograph" },
   { id: "phase", label: "I/Q phase" },
@@ -55,6 +56,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "dsp", label: "DSP" },
   { id: "firmware", label: "Firmware" },
   { id: "coil", label: "TX bench" },
+  { id: "design", label: "Coil design" },
 ];
 
 function StatusDot({ status }: { status: ConnStatus }) {
@@ -1360,6 +1362,8 @@ export default function Home() {
         {tab === "firmware" && <FirmwarePanel />}
 
         {tab === "coil" && <CoilLab harmonics={profile?.harmonics} />}
+
+        {tab === "design" && <CoilDesigner />}
 
       </section>
     </main>
