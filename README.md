@@ -117,13 +117,21 @@ flowchart TD
 - **Consistent, persistent UI:** controls are grouped into clearly-labelled clusters
   (parameter label vs. clickable choice), and UI settings (active tab, scope timebase,
   trigger, FFT span/window/dB/avg/view, recorder window/channels, hodograph offset/EMA)
-  persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`8` tabs, `Enter`/`Z`
+  persist across reloads via `localStorage`. Keyboard shortcuts (`1`–`9` tabs, `Enter`/`Z`
   zero, `Space` run/hold), per-chart fullscreen (`⛶`) and PNG / CSV export.
 - **TX bench (transmitter design):** a **TX bench** tab to size the transmitter coil drive —
   enter the real coil (inductance, DC resistance), the bridge supply and an optional series
   cap, and it draws the full complementary **H-bridge** and computes the coil current
   (**pk-pk / peak / RMS**, per-harmonic table) from the actual switched ±Vbus waveform, plus
-  Q, `Vbus/R` ceiling and coil heating — a client-side sizing aid for the Spectral bridge.
+  Q, `Vbus/R` ceiling and coil heating — a client-side sizing aid for the Spectral bridge. A
+  **measured-vs-model** overlay takes the tone currents you read off a scope FFT of the shunt
+  and back-solves the real per-tone drive weighting.
+- **Coil designer (probe design):** a **Coil design** tab to design the search coil before
+  winding it — pick the geometry (**DD** / concentric / mono), design **both windings** (TX
+  drive + RX pickup, each with its own turns and wire gauge) and get per-coil **inductance**
+  (equal-area circle for a D leg), **DC resistance**, **Q**, wire length, copper mass and
+  self-resonance (from an entered self-capacitance), with a per-winding **wire-gauge trade-off**
+  table. Hands the TX L/R straight to the TX bench.
 - **USB firmware flashing:** update the detector's firmware over USB straight from the
   **Firmware** tab — pick a `.hex` (with a host-disk file browser), one-click flash with a
   live progress bar, state badge and programmer log, then it resets back to the app and
@@ -200,7 +208,7 @@ Talks to real detector hardware over USB-CDC; each device is described by a JSON
 | --- | --- |
 | Telemetry contract (`schema.json` + profiles) | ✅ |
 | Backend: FastAPI + WebSocket + serial (USB-CDC) source | ✅ |
-| Frontend: dashboard (hodograph · I/Q phase · oscilloscope · FFT · ADC scope · DSP · TX bench) | ✅ |
+| Frontend: dashboard (hodograph · I/Q phase · oscilloscope · FFT · ADC scope · DSP · TX bench · Coil design) | ✅ |
 | Live profile/port switching from the UI | ✅ |
 | Session record + replay (file, all tabs + MCP) | ✅ |
 | Data export (PNG · CSV · recording→CSV) | ✅ |
@@ -208,6 +216,7 @@ Talks to real detector hardware over USB-CDC; each device is described by a JSON
 | USB firmware flashing (DFU, Firmware tab + backend) | ✅ |
 | Desktop app (Electron one-click launcher, dynamic ports) | ✅ |
 | TX bench (coil-current calculator + H-bridge schematic) | ✅ |
+| Coil designer (DD/concentric/mono, TX+RX windings, L/R/Q) | ✅ |
 | MCP server (telemetry as AI tools + recording control) | ✅ |
 | Serial transport (real USB-CDC) | ✅ (TAKTYK/URD-1 verified) |
 | Config back to MCU over serial | 🚧 needs firmware command input |

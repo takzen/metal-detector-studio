@@ -277,7 +277,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Metal Detector Studio", version="0.12.0", lifespan=lifespan)
+    app = FastAPI(title="Metal Detector Studio", version="0.13.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
