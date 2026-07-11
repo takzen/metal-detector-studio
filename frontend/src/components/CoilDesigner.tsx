@@ -176,6 +176,44 @@ function CoilResult({
   );
 }
 
+function TradeoffTable({
+  label, dia, turns, awg, isD, w,
+}: {
+  label: string; dia: number; turns: number; awg: number; isD: boolean; w: number;
+}) {
+  const rows = [22, 24, 26, 28, 30, 32, 34].map((g) => ({ g, ...coilCalc(dia, turns, g, isD, w) }));
+  return (
+    <div>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">{label} wire ({turns} t)</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[300px] text-sm">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted">
+              <th className="py-1 text-left font-semibold">AWG</th>
+              <th className="py-1 text-right font-semibold">Ø</th>
+              <th className="py-1 text-right font-semibold">R</th>
+              <th className="py-1 text-right font-semibold">Q</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono tabular-nums">
+            {rows.map((t) => (
+              <tr key={t.g} className={`border-t border-border ${t.g === awg ? "text-foreground" : "text-muted"}`}>
+                <td className="py-1.5 text-left">
+                  AWG {t.g}
+                  {t.g === awg && <span className="ml-2 text-accent">◄</span>}
+                </td>
+                <td className="py-1.5 text-right">{(t.dWire * 1000).toFixed(2)} mm</td>
+                <td className="py-1.5 text-right">{fmtOhm(t.R)}</td>
+                <td className="py-1.5 text-right">{isFinite(t.Q) ? t.Q.toFixed(0) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function CoilDesigner() {
   const [type, setType] = usePersistentState<CoilType>("cd_type", "dd");
   const [diaCm, setDiaCm] = usePersistentState("cd_dia_cm", 25); // outer / TX diameter [cm]
@@ -196,9 +234,6 @@ export function CoilDesigner() {
 
   const tx = useMemo(() => coilCalc(dTx, txTurns, txAwg, isD, w), [dTx, txTurns, txAwg, isD, w]);
   const rx = useMemo(() => coilCalc(dRx, rxTurns, rxAwg, isD, w), [dRx, rxTurns, rxAwg, isD, w]);
-
-  // Wire trade-off for the TX (drive) coil — same geometry, a few gauges.
-  const tradeoff = [22, 24, 26, 28, 30, 32].map((g) => ({ g, ...coilCalc(dTx, txTurns, g, isD, w) }));
 
   const sendToBench = () => {
     if (!isFinite(tx.L) || !isFinite(tx.R)) return;
@@ -319,38 +354,17 @@ export function CoilDesigner() {
         </div>
       </div>
 
-      {/* Wire trade-off (TX) */}
+      {/* Wire trade-off — per winding */}
       <div className="rounded-lg border border-border bg-panel p-4">
-        <h2 className="mb-3 text-sm font-medium text-muted">TX wire choice (same geometry)</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[440px] text-sm">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-wide text-muted">
-                <th className="py-1 text-left font-semibold">AWG</th>
-                <th className="py-1 text-right font-semibold">Ø wire</th>
-                <th className="py-1 text-right font-semibold">R (TX)</th>
-                <th className="py-1 text-right font-semibold">Q</th>
-              </tr>
-            </thead>
-            <tbody className="font-mono tabular-nums">
-              {tradeoff.map((t) => (
-                <tr key={t.g} className={`border-t border-border ${t.g === txAwg ? "text-foreground" : "text-muted"}`}>
-                  <td className="py-1.5 text-left">
-                    AWG {t.g}
-                    {t.g === txAwg && <span className="ml-2 text-accent">◄</span>}
-                  </td>
-                  <td className="py-1.5 text-right">{(t.dWire * 1000).toFixed(2)} mm</td>
-                  <td className="py-1.5 text-right">{fmtOhm(t.R)}</td>
-                  <td className="py-1.5 text-right">{isFinite(t.Q) ? t.Q.toFixed(0) : "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <h2 className="mb-3 text-sm font-medium text-muted">Wire choice (same geometry)</h2>
+        <div className="grid gap-x-8 gap-y-4 md:grid-cols-2">
+          <TradeoffTable label="TX" dia={dTx} turns={txTurns} awg={txAwg} isD={isD} w={w} />
+          {hasRx && <TradeoffTable label="RX" dia={dRx} turns={rxTurns} awg={rxAwg} isD={isD} w={w} />}
         </div>
-        <p className="mt-2 text-xs text-muted">
+        <p className="mt-3 text-xs text-muted">
           Thicker wire (lower AWG) → lower R, higher Q, more current &amp; less heat, but heavier and bulkier;
-          thinner → more turns fit but R climbs. RX usually goes thinner / more turns (higher voltage, low
-          current); TX goes thicker (carries the drive current).
+          thinner → more turns fit but R climbs. TX goes thicker (carries the drive current); RX usually goes
+          thinner / more turns (high voltage, tiny current).
         </p>
       </div>
     </div>
