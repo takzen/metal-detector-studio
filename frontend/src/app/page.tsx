@@ -30,6 +30,7 @@ import { AdcSpectrum } from "@/components/AdcSpectrum";
 import { useSwingPhase } from "@/lib/useSwingPhase";
 import { colorFor } from "@/lib/palette";
 import { usePersistentState } from "@/lib/usePersistentState";
+import { DEFAULT_TONES, harmonicsFromTones } from "@/lib/tones";
 import { useTelemetry, type ConnStatus } from "@/lib/useTelemetry";
 
 const DEG = 180 / Math.PI;
@@ -304,6 +305,11 @@ export default function Home() {
   const [offsetDeg, setOffsetDeg] = usePersistentState("offsetDeg", 0); // demodulator phase offset (colour overlay)
   const [persistence, setPersistence] = usePersistentState("persistence", true); // hodograph phosphor trail
   const [ema, setEma] = usePersistentState("ema", 0.3); // hodograph live-vector smoothing factor
+
+  // Transmitter tones — single source of truth, edited in the TX bench (CoilLab) and read by
+  // every other view. Overlaid onto the device profile's harmonics (ids kept for telemetry).
+  const [tones, setTones] = usePersistentState<number[]>("coilFreqs_v2", DEFAULT_TONES);
+  const harmonics = useMemo(() => harmonicsFromTones(profile?.harmonics, tones), [profile?.harmonics, tones]);
   // Plot-zero reference per harmonic, captured when the hodograph "zero" is pressed.
   // Lets the cards show the delta vector since that zero — exactly what the plot draws.
   // State (not a ref) so reading it in render is valid and a new zero re-renders the cards.
@@ -488,7 +494,7 @@ export default function Home() {
                   <h2 className="text-sm font-medium text-muted">XY hodograph</h2>
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2 text-xs">
-                      {profile?.harmonics.map((h, i) => (
+                      {harmonics.map((h, i) => (
                         <span key={h.id} className="inline-flex items-center gap-1.5">
                           <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorFor(i) }} />
                           <span className="font-mono">{h.id}</span>
@@ -625,7 +631,7 @@ export default function Home() {
                 {profile && (
                   <Hodograph
                     trailRef={t.trailRef}
-                    harmonics={profile.harmonics}
+                    harmonics={harmonics}
                     zeroSignal={zeroNonce}
                     offsetDeg={offsetDeg}
                     ema={ema}
@@ -646,7 +652,7 @@ export default function Home() {
                       <span className="font-mono text-xs text-muted">swing · n={swing.count}</span>
                     </>
                   ) : (
-                    profile?.harmonics.map((h, i) => {
+                    harmonics.map((h, i) => {
                       const s = feature?.harmonics[h.id];
                       const z = zeroBase[h.id];
                       const di = s ? s.i - (z?.i ?? 0) : null;
@@ -674,7 +680,7 @@ export default function Home() {
                       {swing.phase === null ? "—" : wrap180(swing.phase - 90).toFixed(1)}
                     </span>
                   ) : (
-                    profile?.harmonics.map((h) => {
+                    harmonics.map((h) => {
                       const s = feature?.harmonics[h.id];
                       const z = zeroBase[h.id];
                       const di = s ? s.i - (z?.i ?? 0) : null;
@@ -697,7 +703,7 @@ export default function Home() {
 
             <div className="flex flex-col gap-4">
               <div className="grid gap-4 sm:grid-cols-2">
-                {profile?.harmonics.map((h, i) => {
+                {harmonics.map((h, i) => {
                   const s = feature?.harmonics[h.id];
                   // delta vs the plot zero (matches the hodograph vector); no zero set → base 0
                   const z = zeroBase[h.id];
@@ -717,7 +723,7 @@ export default function Home() {
                         </span>
                         <span className="inline-flex items-center gap-1.5">
                           <span className="text-xs text-muted">
-                            h{h.index} · {(h.freq_hz / 1000).toFixed(4)} kHz
+                            h{h.index} · {+(h.freq_hz / 1000).toFixed(2)} kHz
                           </span>
                           <InfoPopover title="Where these values come from">
                             <p>
@@ -863,7 +869,7 @@ export default function Home() {
                 <MaxBtn />
               </div>
             </div>
-            <PhaseLab featureRef={featureRef} harmonics={profile?.harmonics ?? []} />
+            <PhaseLab featureRef={featureRef} harmonics={harmonics} />
           </Card>
         )}
 
@@ -1361,7 +1367,7 @@ export default function Home() {
 
         {tab === "firmware" && <FirmwarePanel />}
 
-        {tab === "coil" && <CoilLab harmonics={profile?.harmonics} />}
+        {tab === "coil" && <CoilLab harmonics={profile?.harmonics} tones={tones} setTones={setTones} />}
 
         {tab === "design" && <CoilDesigner />}
 

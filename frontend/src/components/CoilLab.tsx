@@ -13,19 +13,31 @@
 import { useMemo } from "react";
 import { InfoPopover, CODE_CLS } from "@/components/InfoPopover";
 import { usePersistentState } from "@/lib/usePersistentState";
+import { DEFAULT_TONES } from "@/lib/tones";
 
 type Harm = { id: string; freq_hz: number };
 
-// Spectral-G4 SHE-PWM tones (7.8125 / 23.4375 / 39.0625 kHz) as the default set.
-const DEFAULT_FREQS = [7812.5, 23437.5, 39062.5];
+// The tone set is 4.5 / 13.5 / 40.5 kHz = the lowest tone's odd harmonics 1:3:9 (exact ×3 /
+// ×3 geometric spacing). A symmetric ±Vbus bridge can only emit harmonics of the pattern's
+// repeat rate, so a clean harmonic stack is what the switched drive plays. The frequencies
+// are owned by the page and shared across the app (see lib/tones) — this bench is the editor.
+const DEFAULT_FREQS = DEFAULT_TONES;
 
 const TWO_PI = 2 * Math.PI;
+
+// Integer GCD (Euclid) of the tone frequencies, in Hz — the true repetition rate of a
+// 1-bit pattern that still contains every tone as a harmonic. Frequencies are rounded to
+// whole Hz first so typed decimals don't collapse the GCD to 1.
+const gcd2 = (a: number, b: number): number => (b === 0 ? a : gcd2(b, a % b));
+const gcdHz = (fs: number[]) => fs.map((f) => Math.round(Math.abs(f))).reduce((g, f) => gcd2(g, f));
 
 const fmtOhm = (x: number) =>
   !isFinite(x) ? "—" : x >= 1000 ? `${(x / 1000).toFixed(2)} kΩ` : x >= 100 ? `${x.toFixed(0)} Ω` : `${x.toFixed(1)} Ω`;
 const fmtA = (a: number) =>
   !isFinite(a) ? "—" : a >= 1 ? `${a.toFixed(2)} A` : `${(a * 1000).toFixed(0)} mA`;
 const fmtNum = (x: number, d = 1) => (isFinite(x) ? x.toFixed(d) : "—");
+const fmtHz = (hz: number) =>
+  !isFinite(hz) ? "—" : hz >= 1000 ? `${(hz / 1000).toFixed(hz % 1000 ? 2 : 0)} kHz` : `${Math.round(hz)} Hz`;
 
 function Field({
   label,
@@ -190,7 +202,15 @@ function BridgeSvg({ vbus, iLabel }: { vbus: number; iLabel: string }) {
   );
 }
 
-export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
+export function CoilLab({
+  harmonics,
+  tones,
+  setTones,
+}: {
+  harmonics?: Harm[]; // device-profile harmonics, for the "from device" seed button
+  tones: number[]; // the shared tone set (owned by the page — this bench edits it)
+  setTones: (t: number[]) => void;
+}) {
   const [luH, setLuH] = usePersistentState("coilL_uH", 500); // coil inductance [µH]
   const [rdc, setRdc] = usePersistentState("coilRdc", 2); // coil DC resistance [Ω]
   const [vbus, setVbus] = usePersistentState("coilVbus", 12); // bridge supply [V]
@@ -198,8 +218,9 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
   const [nTones, setNTones] = usePersistentState("coilTones", 3); // how many tones are driven (1–3)
   const [measOn, setMeasOn] = usePersistentState("coilMeasOn", false); // overlay measured tone currents
   const [measI, setMeasI] = usePersistentState<number[]>("coilMeasI", [0, 0, 0]); // measured tone amplitudes [mA]
-  const [freqsStored, setFreqs] = usePersistentState<number[]>("coilFreqs", DEFAULT_FREQS);
-  // Heal whatever got persisted (missing slots, 0, NaN) back to the Spectral defaults,
+  const freqsStored = tones;
+  const setFreqs = setTones;
+  // Heal whatever got persisted (missing slots, 0, NaN) back to the defaults,
   // so the harmonic fields are never empty.
   const freqs = useMemo(
     () =>
@@ -216,17 +237,36 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
 
   // Steady-state coil current for the switched ±Vbus bridge waveform.
   //
-  // The rail waveform v(t) = Vbus · sign(Σ sin(2πfᵢt)) over one period of the lowest
-  // tone (tones are treated as harmonics of it — Spectral's 1:3:5 set is). Fourier
+  // The rail waveform v(t) = Vbus · sign(Σ sin 2πfᵢt) is periodic at the pattern
+  // fundamental. When every tone is an integer multiple of the lowest one (the default
+  // 1:3:9 set is) that fundamental IS the lowest tone. Off the grid the true fundamental
+  // drops to the GCD of the tones, so one period of the pattern still contains them — a
+  // 1-bit bridge can only emit harmonics of its repeat rate, so an off-grid tone exists
+  // only as a high harmonic of a much longer pattern (flagged for the user). Fourier
   // coefficients of v(t) drive the series R–L(–C) per harmonic (superposition is exact
   // for the periodic steady state); the current waveform is reassembled and measured.
-  // For a single tone this reduces to the classic square-drive triangle.
   const sim = useMemo(() => {
-    const fBase = Math.min(...activeFreqs);
-    if (!isFinite(fBase) || fBase <= 0 || !(L > 0) || !(vbus > 0)) return null;
+    if (!activeFreqs.length) return null;
+    const fMin = Math.min(...activeFreqs);
+    const fMax = Math.max(...activeFreqs);
+    if (!isFinite(fMin) || fMin <= 0 || !(L > 0) || !(vbus > 0)) return null;
     const R = Math.max(rdc, 1e-3);
-    const N = 1024; // samples per period
-    const H = 128; // harmonics of fBase to carry (amplitudes fall ~1/n² into L)
+    const N = 1024; // samples per pattern period
+    const H = 128; // harmonics of fBase carried (waveform reconstruction + tone lookup)
+
+    // Which tones sit on the lowest tone's harmonic grid (integer multiples of it)?
+    const onGrid = activeFreqs.map((f) => Math.abs(f / fMin - Math.round(f / fMin)) < 0.02);
+    const offGrid = onGrid.some((g) => !g);
+
+    // Pattern fundamental: the lowest tone when everything is on its grid (exact, cheap),
+    // else the GCD of the tones — but only if the top tone still lands within the harmonic
+    // budget H. Too irrational even for that → keep fMin (off-grid tones read 0, the banner
+    // explains why).
+    let fBase = fMin;
+    if (offGrid) {
+      const g = gcdHz(activeFreqs);
+      if (g > 0 && fMax / g <= H - 8) fBase = g;
+    }
 
     // 1-bit multitone rail waveform: sign of the summed tones (single tone = plain square)
     const v = new Float64Array(N);
@@ -263,7 +303,7 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
         cur[k] += iAmp * Math.sin(th + ph0 - phZ);
       }
       activeFreqs.forEach((f, idx) => {
-        if (Math.abs(f / fBase - h) < 0.01) toneAmp[idx] = iAmp;
+        if (Math.round(f / fBase) === h && Math.abs(f / fBase - h) < 0.05) toneAmp[idx] = iAmp;
       });
     }
 
@@ -281,6 +321,9 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
       peak: Math.max(Math.abs(mx), Math.abs(mn)),
       rms: Math.sqrt(sq / N),
       toneAmp,
+      onGrid,
+      offGrid,
+      fBase,
     };
   }, [activeFreqs, L, rdc, vbus, seriesC]);
 
@@ -294,7 +337,7 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
     const xl = w * L;
     const x = xl - (seriesC ? 1 / (w * seriesC) : 0);
     const z = Math.hypot(rdc, x);
-    return { f, xl, z, q: xl / rdc, iAmp: sim?.toneAmp[idx] ?? NaN };
+    return { f, xl, z, q: xl / rdc, iAmp: sim?.toneAmp[idx] ?? NaN, onGrid: sim?.onGrid[idx] ?? true };
   });
 
   // Measured-vs-model rows: each active tone's modelled current, the measured amplitude the
@@ -332,8 +375,10 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
               from the simulated spectrum.
             </p>
             <p>
-              Tones are treated as harmonics of the lowest one (Spectral&apos;s 7.8125 / 23.4375 / 39.0625 =
-              1:3:5). RMS uses Parseval over all harmonics.
+              A 1-bit bridge can only emit harmonics of the pattern&apos;s repeat rate, so tones want to sit on
+              the lowest tone&apos;s grid — the default 4.5 / 13.5 / 40.5 kHz = 1:3:9. Off-grid tones drop the
+              pattern fundamental to the GCD of the set; if that&apos;s too small they can&apos;t be synthesised
+              cleanly and are flagged. RMS uses Parseval over all harmonics.
             </p>
             <p>
               <b>Series C</b> (0 = none) models a DC-block / partial-resonance cap in the coil path — it
@@ -379,7 +424,7 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
               ))}
               <button
                 onClick={() => setFreqs(DEFAULT_FREQS)}
-                title="reset to the Spectral SHE-PWM tones (7.8125 / 23.4375 / 39.0625 kHz)"
+                title="reset to the default SHE-PWM tones (4.5 / 13.5 / 40.5 kHz = 1:3:9)"
                 className="rounded-md border border-border px-2 py-1 text-xs text-muted transition-colors hover:text-foreground"
               >
                 defaults
@@ -427,7 +472,17 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
           </div>
           {nTones > 1 && (
             <>
-              <h3 className="mb-2 text-[10px] uppercase tracking-wide text-muted">per tone (from the pattern spectrum)</h3>
+              <div className="mb-2 flex items-center gap-2">
+                <h3 className="text-[10px] uppercase tracking-wide text-muted">per tone (from the pattern spectrum)</h3>
+                {sim?.offGrid && (
+                  <span
+                    title={`Tones off the lowest tone's harmonic grid. A 1-bit bridge only emits harmonics of the pattern's repeat rate (here the GCD ≈ ${fmtHz(sim.fBase)}), so these tones exist only as high harmonics of a much longer pattern and the SHE driver won't reproduce them cleanly. Set the tones to integer multiples of the lowest one, e.g. 1:3:9 = 4.5 / 13.5 / 40.5 kHz.`}
+                    className="cursor-help rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
+                  >
+                    ⚠ off-grid
+                  </span>
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[420px] text-sm">
                   <thead>
@@ -441,8 +496,15 @@ export function CoilLab({ harmonics }: { harmonics?: Harm[] }) {
                   </thead>
                   <tbody className="font-mono tabular-nums">
                     {rows.map((r, i) => (
-                      <tr key={i} className="border-t border-border">
-                        <td className="py-1.5 text-left text-foreground">{(r.f / 1000).toFixed(3)} kHz</td>
+                      <tr key={i} className={`border-t border-border ${r.onGrid ? "" : "opacity-60"}`}>
+                        <td className="py-1.5 text-left text-foreground">
+                          {(r.f / 1000).toFixed(3)} kHz
+                          {!r.onGrid && (
+                            <span className="ml-1.5 rounded bg-amber-500/15 px-1 text-[9px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                              off-grid
+                            </span>
+                          )}
+                        </td>
                         <td className="py-1.5 text-right text-muted">{fmtOhm(r.xl)}</td>
                         <td className="py-1.5 text-right text-muted">{fmtOhm(r.z)}</td>
                         <td className="py-1.5 text-right text-muted">{fmtNum(r.q, 1)}</td>
