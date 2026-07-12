@@ -66,9 +66,9 @@ function Field({
  *  bus runs at local x = 48). `mirror` flips it for the right bridge leg. */
 function Fet({ x, y, kind, mirror }: { x: number; y: number; kind: "P" | "N"; mirror?: boolean }) {
   // Source-lead arrow (simplified 3-terminal style, BJT-like): N — bottom stub (GND side)
-  // pointing OUT toward the terminal; P — top stub (rail side) pointing IN toward the
-  // channel. Drains meet at the coil node.
-  const arrow = kind === "N" ? "M34,54 L34,62 L42,58 Z" : "M38,28 L38,36 L30,32 Z";
+  // pointing IN toward the channel; P — top stub (rail side) pointing OUT toward the
+  // terminal. Drains meet at the coil node.
+  const arrow = kind === "N" ? "M34,54 L34,62 L26,58 Z" : "M38,28 L38,36 L46,32 Z";
   return (
     <g transform={`translate(${x},${y})${mirror ? " scale(-1,1)" : ""}`}>
       {/* gate lead · gate plate · channel plate · drain stub up · source stub down */}
@@ -143,12 +143,12 @@ function BridgeSvg({ vbus, iLabel }: { vbus: number; iLabel: string }) {
         <text className="lbl" x="690" y="76">Rg2 4R7</text>
         <path className="ink" d="M870,165 V345" />
 
-        {/* LEFT LEG: P on top, N below, drains meet at the coil node (x=460) */}
+        {/* LEFT LEG: N on top, P below, drains meet at the coil node (x=460) */}
         <Fet x={412} y={120} kind="P" />
         <Fet x={412} y={300} kind="N" />
         <text className="ref" x="470" y="150">Q3</text>
-        <text className="lbl" x="466" y="178">P</text>
-        <text className="lbl" x="466" y="360">N</text>
+        <text className="lbl" x="466" y="178">N</text>
+        <text className="lbl" x="466" y="360">P</text>
         <path className="ink" d="M460,126 V120" />
         <path className="ink" d="M460,204 V306" />
         <path className="ink" d="M460,384 V480" />
@@ -159,8 +159,8 @@ function BridgeSvg({ vbus, iLabel }: { vbus: number; iLabel: string }) {
         <Fet x={870} y={120} kind="P" mirror />
         <Fet x={870} y={300} kind="N" mirror />
         <text className="ref" x="812" y="150" textAnchor="end">Q4</text>
-        <text className="lbl" x="816" y="178" textAnchor="end">P</text>
-        <text className="lbl" x="816" y="360" textAnchor="end">N</text>
+        <text className="lbl" x="816" y="178" textAnchor="end">N</text>
+        <text className="lbl" x="816" y="360" textAnchor="end">P</text>
         <path className="ink" d="M822,126 V120" />
         <path className="ink" d="M822,204 V306" />
         <path className="ink" d="M822,384 V480" />
