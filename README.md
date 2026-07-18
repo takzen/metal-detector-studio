@@ -15,7 +15,7 @@ It is a **universal bench lab**: the detector under test is described by a JSON
 
 - **Spectral-G4** — flagship multi-frequency VLF detector (STM32G474 base + STM32G071
   probe): 3 simultaneous harmonics via SHE-PWM (7.8125 / 23.4375 / 39.0625 kHz),
-  per-harmonic `{mag, phase}` + phase diffs (`dphase31`, `dphase51`) and raw I/Q.
+  per-harmonic `{mag, phase}` + phase diffs (`dphase31`, `dphase91`) and raw I/Q.
 - **URD-1 / TAKTYK** — single-frequency VLF on ATxmega (USB-CDC telemetry).
 - **Example VLF** — a generic single-frequency starter profile (`example_vlf`) to copy.
 

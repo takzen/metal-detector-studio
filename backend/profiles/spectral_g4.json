@@ -4,26 +4,26 @@
   "device": {
     "target": "Spectral-G4",
     "mcu": "STM32G474",
-    "probe": "STM32G071",
+    "probe": "passive (no MCU)",
     "transport": "usb-cdc"
   },
   "harmonics": [
-    { "id": "f1", "index": 1, "freq_hz": 7812.5 },
-    { "id": "f2", "index": 3, "freq_hz": 23437.5 },
-    { "id": "f3", "index": 5, "freq_hz": 39062.5 }
+    { "id": "f1", "index": 1, "freq_hz": 4500.0 },
+    { "id": "f2", "index": 3, "freq_hz": 13500.0 },
+    { "id": "f3", "index": 9, "freq_hz": 40500.0 }
   ],
   "phase_diffs": [
     { "name": "dphase31", "from": "f2", "to": "f1", "description": "harmonic 3 vs 1: wrap(phase(f2) - phase(f1))" },
-    { "name": "dphase51", "from": "f3", "to": "f1", "description": "harmonic 5 vs 1: wrap(phase(f3) - phase(f1))" }
+    { "name": "dphase91", "from": "f3", "to": "f1", "description": "harmonic 9 vs 1: wrap(phase(f3) - phase(f1))" }
   ],
   "extras": ["gb_residual", "temp_c"],
   "raw": {
-    "sample_rate_hz": 250000,
+    "sample_rate_hz": 144000,
     "block_size": 1024,
-    "dtype": "int16",
-    "adc_bits": 12,
-    "adc_vref": 3.3,
-    "fullscale_lsb": 2047
+    "dtype": "int32",
+    "adc_bits": 18,
+    "adc_vref": 4.096,
+    "fullscale_lsb": 131071
   },
   "stream": { "feature_hz": 60, "raw_hz": 12 },
   "config_keys": ["gain", "freq", "mode", "noise", "sweep_period", "paused", "target"],

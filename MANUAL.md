@@ -140,7 +140,7 @@ Beside the hodograph:
   Xr/Yr)** = the raw vector from the device (same scale as SERVICE), and **delta (vs zero)**
   = raw minus the studio zero (what the plot draws). The studio computes the delta itself —
   the detector's ENTER no longer moves the studio plot; use the `zero` button here.
-- **Phase diffs** — phase differences between harmonics (e.g. `dphase31`, `dphase51`);
+- **Phase diffs** — phase differences between harmonics (e.g. `dphase31`, `dphase91`);
   key for multi-frequency discrimination. Single-frequency profiles show "none".
 - **Extras** — extra fields from the source (TAKTYK: `vdi`, `ground`, `audio`,
   `threshold`, `kgnd`, `mode`, `px`, `py`).

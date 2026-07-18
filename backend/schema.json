@@ -30,7 +30,7 @@
         "phase_diffs": {
           "type": "map<string, float>",
           "unit": "rad",
-          "description": "keyed by profile phase-diff name (e.g. dphase31, dphase51); empty for single-freq devices"
+          "description": "keyed by profile phase-diff name (e.g. dphase31, dphase91); empty for single-freq devices"
         },
         "extras": {
           "type": "map<string, float>",
